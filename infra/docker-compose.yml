@@ -1,0 +1,37 @@
+# Jarvis infrastructure: MQTT broker, optional Ollama for local LLM.
+# Run from repo root or infra/: docker compose -f infra/docker-compose.yml up -d
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: jarvis-mosquitto
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mosquitto_sub", "-t", "$SYS/broker/version", "-C", "1", "-W", "3"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Optional: run Ollama on the home server for local LLM (pull model: docker exec jarvis-ollama ollama run phi3)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: jarvis-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+    profiles:
+      - llm
+
+volumes:
+  mosquitto_data:
+  mosquitto_log:
+  ollama_data:

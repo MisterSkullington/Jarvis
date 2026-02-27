@@ -1,0 +1,50 @@
+profile: dev
+
+mqtt:
+  host: localhost
+  port: 1883
+  username: null
+  password: null
+  client_id_prefix: jarvis
+  tls: false
+
+llm:
+  enabled: true
+  base_url: http://localhost:11434
+  model: phi3
+  timeout_seconds: 60
+
+nlu_agent:
+  base_url: http://localhost:8001
+  timeout_seconds: 30
+
+audio:
+  sample_rate: 16000
+  channels: 1
+  vosk_model_path: models/vosk-model-small-en-us-0.15
+  whisper_model: base
+
+wakeword:
+  wake_word: jarvis
+  enabled: true
+  sensitivity: 0.5
+
+tts:
+  engine: piper
+  piper_executable: piper
+  piper_model: en_US-libritts-high.onnx
+  voice_rate: 180
+  voice_volume: 1.0
+
+home_assistant:
+  base_url: http://homeassistant.local:8123
+  token_env_var: HASS_TOKEN
+  default_light_entity: light.living_room
+
+safety:
+  allowed_system_commands:
+    lock_pc: "rundll32.exe user32.dll,LockWorkStation"
+  dangerous_actions_rate_limit_seconds: 30
+
+log_level: INFO
+
