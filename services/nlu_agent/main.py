@@ -44,6 +44,7 @@ RULES = [
     (r"\b(?:news|headlines|what's happening)\b", "news_query", []),
     (r"\b(what time|current time|time now|what's the time)\b", "time_query", []),
     (r"\b(?:morning briefing|daily briefing|brief me|status report)\b", "briefing", []),
+    (r"\b(?:system status|system info|how.s the (?:system|server|computer)|diagnostics)\b", "system_status", []),
     (r"\b(stop|cancel|never mind|forget it)\b", "cancel", []),
     (r"\b(yes|yeah|yep|affirmative|do it|go ahead|proceed)\b", "confirm_yes", []),
     (r"\b(no|nope|negative|don't|hold off|abort)\b", "confirm_no", []),

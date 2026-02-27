@@ -27,6 +27,15 @@ import jarvis_core.persona as persona
 
 LOG = logging.getLogger(__name__)
 
+_skill_registry = {}
+try:
+    from skills import load_skills
+    _skill_registry = load_skills()
+    if _skill_registry:
+        LOG.info("Loaded %d skill(s): %s", len(_skill_registry), ", ".join(_skill_registry.keys()))
+except Exception as e:
+    LOG.debug("Skill loading skipped: %s", e)
+
 TOPIC_STT_TEXT = "jarvis/stt/text"
 TOPIC_TTS_TEXT = "jarvis/tts/text"
 TOPIC_SCHEDULER_ADD = "jarvis/scheduler/add"
@@ -223,6 +232,12 @@ def dispatch_and_respond(
         with _confirmation_lock:
             _pending_confirmation = None
         return persona.cancel_response(user)
+
+    if intent in _skill_registry:
+        try:
+            return _skill_registry[intent](text, entities, config, mqtt_client, user)
+        except Exception as e:
+            LOG.warning("Skill %s failed: %s", intent, e)
 
     return chat_nlu(text, config)
 
