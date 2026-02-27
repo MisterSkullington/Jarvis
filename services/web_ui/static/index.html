@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>J.A.R.V.I.S.</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@300;400;500;600;700&family=Orbitron:wght@400;500;700&display=swap');
+
+  :root {
+    --primary: #00d4ff;
+    --primary-dim: #0088aa;
+    --accent: #00ffcc;
+    --warning: #ff8800;
+    --danger: #ff3355;
+    --bg: #0a0e17;
+    --surface: rgba(0, 212, 255, 0.05);
+    --border: rgba(0, 212, 255, 0.2);
+    --glow: 0 0 20px rgba(0, 212, 255, 0.3);
+    --text: #c8e6f0;
+    --text-dim: #6a8a9a;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Rajdhani', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Scanline overlay */
+  body::after {
+    content: '';
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: repeating-linear-gradient(
+      0deg, transparent, transparent 2px,
+      rgba(0, 212, 255, 0.015) 2px, rgba(0, 212, 255, 0.015) 4px
+    );
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  .hud-container {
+    display: grid;
+    grid-template-columns: 280px 1fr 280px;
+    grid-template-rows: 60px 1fr 80px;
+    gap: 12px;
+    height: 100vh;
+    padding: 12px;
+  }
+
+  /* --- Header --- */
+  .header {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 20px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .header h1 {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 1.5rem;
+    font-weight: 500;
+    letter-spacing: 8px;
+    color: var(--primary);
+    text-shadow: 0 0 30px rgba(0, 212, 255, 0.5);
+  }
+
+  .header .clock {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 1.1rem;
+    color: var(--primary-dim);
+    letter-spacing: 3px;
+  }
+
+  .header .status-indicator {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 0.85rem; color: var(--text-dim);
+  }
+
+  .header .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 10px var(--accent);
+    animation: pulse-dot 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  /* --- Panels --- */
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 16px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .panel::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--primary), transparent);
+  }
+
+  .panel-title {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 0.7rem;
+    font-weight: 500;
+    letter-spacing: 3px;
+    color: var(--primary-dim);
+    text-transform: uppercase;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid rgba(0, 212, 255, 0.1);
+  }
+
+  /* --- Left sidebar: Services --- */
+  .services-panel { grid-row: 2; grid-column: 1; overflow-y: auto; }
+
+  .service-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(0, 212, 255, 0.05);
+    font-size: 0.9rem;
+  }
+
+  .service-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .service-dot.online { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+  .service-dot.offline { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
+  .service-dot.unknown { background: var(--text-dim); }
+
+  .service-name { flex: 1; color: var(--text); }
+  .service-status { font-size: 0.75rem; color: var(--text-dim); }
+
+  /* --- Centre: Main interaction --- */
+  .main-panel {
+    grid-row: 2; grid-column: 2;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 30px;
+    position: relative;
+  }
+
+  /* Arc reactor / waveform */
+  .reactor {
+    width: 200px; height: 200px;
+    position: relative;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  .reactor-ring {
+    position: absolute;
+    border: 2px solid var(--border);
+    border-radius: 50%;
+    animation: rotate-ring 8s linear infinite;
+  }
+
+  .reactor-ring.outer { width: 200px; height: 200px; border-color: rgba(0, 212, 255, 0.15); }
+  .reactor-ring.middle { width: 150px; height: 150px; border-color: rgba(0, 212, 255, 0.25); animation-direction: reverse; animation-duration: 6s; }
+  .reactor-ring.inner { width: 100px; height: 100px; border-color: rgba(0, 212, 255, 0.35); animation-duration: 4s; }
+
+  .reactor-core {
+    width: 60px; height: 60px;
+    border-radius: 50%;
+    background: radial-gradient(circle, var(--primary), transparent 70%);
+    box-shadow: 0 0 40px rgba(0, 212, 255, 0.4), 0 0 80px rgba(0, 212, 255, 0.2);
+    z-index: 1;
+    transition: all 0.5s ease;
+  }
+
+  .reactor-core.listening {
+    box-shadow: 0 0 60px rgba(0, 255, 204, 0.6), 0 0 120px rgba(0, 255, 204, 0.3);
+    background: radial-gradient(circle, var(--accent), transparent 70%);
+    animation: pulse-core 1s ease-in-out infinite;
+  }
+
+  .reactor-core.thinking {
+    box-shadow: 0 0 60px rgba(0, 212, 255, 0.8), 0 0 120px rgba(0, 212, 255, 0.4);
+    animation: pulse-core 0.5s ease-in-out infinite;
+  }
+
+  .reactor-core.speaking {
+    box-shadow: 0 0 80px rgba(0, 212, 255, 0.6), 0 0 160px rgba(0, 212, 255, 0.3);
+    animation: speak-pulse 0.3s ease-in-out infinite alternate;
+  }
+
+  @keyframes rotate-ring { to { transform: rotate(360deg); } }
+  @keyframes pulse-core { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.15); } }
+  @keyframes speak-pulse { to { transform: scale(1.1); } }
+
+  .state-label {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 0.8rem;
+    letter-spacing: 4px;
+    color: var(--primary-dim);
+    text-transform: uppercase;
+  }
+
+  /* Transcript area */
+  .transcript-area {
+    width: 100%;
+    max-width: 600px;
+    min-height: 120px;
+    text-align: center;
+  }
+
+  .transcript-user {
+    font-size: 1rem;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+    font-style: italic;
+  }
+
+  .transcript-jarvis {
+    font-size: 1.2rem;
+    color: var(--text);
+    line-height: 1.6;
+    text-shadow: 0 0 10px rgba(0, 212, 255, 0.2);
+  }
+
+  .typing-cursor {
+    display: inline-block;
+    width: 2px;
+    height: 1.2em;
+    background: var(--primary);
+    margin-left: 2px;
+    animation: blink 0.8s step-end infinite;
+    vertical-align: text-bottom;
+  }
+
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* --- Right sidebar: Activity --- */
+  .activity-panel { grid-row: 2; grid-column: 3; overflow-y: auto; }
+
+  .activity-item {
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(0, 212, 255, 0.05);
+    font-size: 0.85rem;
+  }
+
+  .activity-time {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 0.65rem;
+    color: var(--text-dim);
+    letter-spacing: 1px;
+  }
+
+  .activity-text { color: var(--text); margin-top: 2px; }
+  .activity-text.user-msg { color: var(--text-dim); }
+  .activity-text.jarvis-msg { color: var(--primary); }
+
+  /* --- Footer: Input --- */
+  .input-bar {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 20px;
+  }
+
+  .input-bar input {
+    flex: 1;
+    background: rgba(0, 212, 255, 0.05);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 12px 16px;
+    color: var(--text);
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 1rem;
+    outline: none;
+    transition: border-color 0.3s, box-shadow 0.3s;
+  }
+
+  .input-bar input:focus {
+    border-color: var(--primary);
+    box-shadow: var(--glow);
+  }
+
+  .input-bar input::placeholder { color: var(--text-dim); }
+
+  .input-bar button {
+    background: rgba(0, 212, 255, 0.1);
+    border: 1px solid var(--primary-dim);
+    border-radius: 4px;
+    padding: 12px 24px;
+    color: var(--primary);
+    font-family: 'Orbitron', sans-serif;
+    font-size: 0.75rem;
+    letter-spacing: 2px;
+    cursor: pointer;
+    transition: all 0.3s;
+  }
+
+  .input-bar button:hover {
+    background: rgba(0, 212, 255, 0.2);
+    box-shadow: var(--glow);
+  }
+
+  /* Metrics bar */
+  .metrics {
+    display: flex; gap: 20px; font-size: 0.75rem; color: var(--text-dim);
+  }
+
+  .metric-value {
+    color: var(--primary);
+    font-family: 'Orbitron', sans-serif;
+    margin-left: 4px;
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+</style>
+</head>
+<body>
+<div class="hud-container">
+
+  <!-- Header -->
+  <div class="header">
+    <h1>J.A.R.V.I.S.</h1>
+    <div class="status-indicator">
+      <div class="dot" id="connectionDot"></div>
+      <span id="connectionStatus">CONNECTING</span>
+    </div>
+    <div class="clock" id="clock"></div>
+  </div>
+
+  <!-- Left: Services -->
+  <div class="panel services-panel">
+    <div class="panel-title">SYSTEMS</div>
+    <div id="servicesList">
+      <div class="service-item"><div class="service-dot unknown"></div><span class="service-name">Initialising...</span></div>
+    </div>
+  </div>
+
+  <!-- Centre: Main -->
+  <div class="main-panel">
+    <div class="reactor">
+      <div class="reactor-ring outer"></div>
+      <div class="reactor-ring middle"></div>
+      <div class="reactor-ring inner"></div>
+      <div class="reactor-core" id="reactorCore"></div>
+    </div>
+    <div class="state-label" id="stateLabel">STANDBY</div>
+    <div class="transcript-area">
+      <div class="transcript-user" id="userText"></div>
+      <div class="transcript-jarvis" id="jarvisText"></div>
+    </div>
+    <div class="metrics">
+      <span>UTTERANCES <span class="metric-value" id="metricUtterances">0</span></span>
+      <span>LATENCY <span class="metric-value" id="metricLatency">0ms</span></span>
+      <span>ERRORS <span class="metric-value" id="metricErrors">0</span></span>
+    </div>
+  </div>
+
+  <!-- Right: Activity Log -->
+  <div class="panel activity-panel">
+    <div class="panel-title">ACTIVITY LOG</div>
+    <div id="activityLog"></div>
+  </div>
+
+  <!-- Footer: Input -->
+  <div class="input-bar">
+    <input type="text" id="textInput" placeholder="Speak or type a command..." autocomplete="off">
+    <button onclick="sendMessage()">SEND</button>
+  </div>
+</div>
+
+<script>
+const WS_URL = `ws://${location.host}/ws`;
+let ws = null;
+let reconnectTimer = null;
+let utteranceCount = 0;
+let errorCount = 0;
+
+const services = {
+  orchestrator: { name: 'Orchestrator', status: 'unknown', lastSeen: 0 },
+  nlu_agent: { name: 'NLU Agent', status: 'unknown', lastSeen: 0 },
+  tts: { name: 'TTS Engine', status: 'unknown', lastSeen: 0 },
+  stt: { name: 'STT Engine', status: 'unknown', lastSeen: 0 },
+  scheduler: { name: 'Scheduler', status: 'unknown', lastSeen: 0 },
+  wakeword: { name: 'Wake Word', status: 'unknown', lastSeen: 0 },
+  web_ui: { name: 'Web HUD', status: 'online', lastSeen: Date.now() },
+};
+
+function connect() {
+  ws = new WebSocket(WS_URL);
+  ws.onopen = () => {
+    document.getElementById('connectionDot').style.background = 'var(--accent)';
+    document.getElementById('connectionStatus').textContent = 'ONLINE';
+    addActivity('system', 'HUD connected to J.A.R.V.I.S.');
+  };
+  ws.onclose = () => {
+    document.getElementById('connectionDot').style.background = 'var(--danger)';
+    document.getElementById('connectionStatus').textContent = 'OFFLINE';
+    reconnectTimer = setTimeout(connect, 3000);
+  };
+  ws.onerror = () => {};
+  ws.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      handleMessage(data);
+    } catch (e) {}
+  };
+}
+
+function handleMessage(data) {
+  const topic = data._topic || '';
+
+  if (topic === 'jarvis/stt/text') {
+    const text = data.text || '';
+    if (text) {
+      document.getElementById('userText').textContent = `"${text}"`;
+      addActivity('user', text);
+      utteranceCount++;
+      document.getElementById('metricUtterances').textContent = utteranceCount;
+    }
+  }
+
+  if (topic === 'jarvis/tts/text') {
+    const text = data.text || '';
+    if (text) {
+      typeText('jarvisText', text);
+      addActivity('jarvis', text);
+    }
+  }
+
+  if (topic === 'jarvis/ui/state') {
+    const state = data.state || 'idle';
+    setState(state);
+  }
+
+  if (topic.startsWith('jarvis/status/')) {
+    const service = topic.split('/').pop();
+    if (services[service]) {
+      services[service].status = 'online';
+      services[service].lastSeen = Date.now();
+      renderServices();
+    }
+  }
+}
+
+function setState(state) {
+  const core = document.getElementById('reactorCore');
+  const label = document.getElementById('stateLabel');
+  core.className = 'reactor-core';
+  if (state === 'listening') { core.classList.add('listening'); label.textContent = 'LISTENING'; }
+  else if (state === 'thinking' || state === 'processing') { core.classList.add('thinking'); label.textContent = 'PROCESSING'; }
+  else if (state === 'speaking') { core.classList.add('speaking'); label.textContent = 'SPEAKING'; }
+  else { label.textContent = 'STANDBY'; }
+}
+
+function typeText(elementId, text) {
+  const el = document.getElementById(elementId);
+  el.innerHTML = '';
+  let i = 0;
+  const cursor = document.createElement('span');
+  cursor.className = 'typing-cursor';
+  el.appendChild(cursor);
+  const interval = setInterval(() => {
+    if (i < text.length) {
+      el.insertBefore(document.createTextNode(text[i]), cursor);
+      i++;
+    } else {
+      clearInterval(interval);
+      setTimeout(() => cursor.remove(), 2000);
+    }
+  }, 25);
+}
+
+function addActivity(type, text) {
+  const log = document.getElementById('activityLog');
+  const item = document.createElement('div');
+  item.className = 'activity-item';
+  const now = new Date();
+  const time = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const cls = type === 'user' ? 'user-msg' : type === 'jarvis' ? 'jarvis-msg' : '';
+  const prefix = type === 'user' ? 'YOU: ' : type === 'jarvis' ? 'JARVIS: ' : '';
+  item.innerHTML = `<div class="activity-time">${time}</div><div class="activity-text ${cls}">${prefix}${text.substring(0, 100)}</div>`;
+  log.insertBefore(item, log.firstChild);
+  while (log.children.length > 50) log.removeChild(log.lastChild);
+}
+
+function renderServices() {
+  const el = document.getElementById('servicesList');
+  const now = Date.now();
+  el.innerHTML = Object.entries(services).map(([key, svc]) => {
+    let statusClass = svc.status === 'online' ? 'online' : svc.status === 'offline' ? 'offline' : 'unknown';
+    if (svc.status === 'online' && svc.lastSeen && (now - svc.lastSeen > 120000)) statusClass = 'unknown';
+    return `<div class="service-item"><div class="service-dot ${statusClass}"></div><span class="service-name">${svc.name}</span><span class="service-status">${statusClass.toUpperCase()}</span></div>`;
+  }).join('');
+}
+
+function sendMessage() {
+  const input = document.getElementById('textInput');
+  const text = input.value.trim();
+  if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ topic: 'jarvis/stt/text', payload: { text } }));
+  document.getElementById('userText').textContent = `"${text}"`;
+  addActivity('user', text);
+  utteranceCount++;
+  document.getElementById('metricUtterances').textContent = utteranceCount;
+  input.value = '';
+}
+
+document.getElementById('textInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') sendMessage();
+});
+
+function updateClock() {
+  const now = new Date();
+  const d = now.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
+  const t = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  document.getElementById('clock').textContent = `${d}  ${t}`;
+}
+
+setInterval(updateClock, 1000);
+updateClock();
+renderServices();
+connect();
+
+setInterval(async () => {
+  try {
+    const r = await fetch('/health');
+    if (r.ok) { services.web_ui.lastSeen = Date.now(); services.web_ui.status = 'online'; }
+  } catch {}
+  renderServices();
+}, 30000);
+
+// Fetch metrics periodically
+setInterval(async () => {
+  try {
+    const r = await fetch('http://' + location.hostname + ':8002/metrics');
+    if (r.ok) {
+      const text = await r.text();
+      const latMatch = text.match(/jarvis_last_latency_seconds\s+([\d.]+)/);
+      const errMatch = text.match(/jarvis_errors_total\s+(\d+)/);
+      if (latMatch) document.getElementById('metricLatency').textContent = (parseFloat(latMatch[1]) * 1000).toFixed(0) + 'ms';
+      if (errMatch) document.getElementById('metricErrors').textContent = errMatch[1];
+      services.orchestrator.status = 'online';
+      services.orchestrator.lastSeen = Date.now();
+    }
+  } catch {}
+}, 5000);
+</script>
+</body>
+</html>
