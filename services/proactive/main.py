@@ -10,7 +10,6 @@ import json
 import logging
 import sys
 import time
-from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -81,14 +80,10 @@ def morning_briefing_job() -> None:
 
 
 def calendar_alert_job() -> None:
-    config = load_config()
-    user = _get_user(config)
     try:
         from services.integrations.calendar import get_next_events
         events = get_next_events(limit=3)
         if events:
-            alert_min = getattr(config.proactive, "calendar_alert_minutes_before", 10)
-            now = datetime.now()
             for event in events:
                 summary = event.get("summary", "Event")
                 _notify("Calendar", f"Upcoming: {summary}")

@@ -15,7 +15,7 @@ import subprocess
 import sys
 import threading
 import time
-from typing import Dict, List, Optional
+from typing import Dict
 
 CORE_SERVICES = [
     ("nlu_agent", "services.nlu_agent.main"),

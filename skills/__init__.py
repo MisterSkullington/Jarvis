@@ -26,7 +26,7 @@ import importlib
 import logging
 import pkgutil
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Callable, Dict
 
 LOG = logging.getLogger(__name__)
 

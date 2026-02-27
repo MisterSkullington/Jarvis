@@ -7,10 +7,8 @@ across sessions.
 """
 from __future__ import annotations
 
-import json
 import logging
 import sys
-import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -19,9 +17,9 @@ from typing import Any, Dict, List, Optional
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from sqlalchemy import Column, DateTime, Float, Integer, String, Text, create_engine
-from sqlalchemy.orm import Session, declarative_base, sessionmaker
+from sqlalchemy.orm import declarative_base, sessionmaker
 
-from jarvis_core import load_config, configure_logging
+from jarvis_core import load_config
 
 LOG = logging.getLogger(__name__)
 Base = declarative_base()
