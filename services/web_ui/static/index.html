@@ -425,7 +425,7 @@ function connect() {
 function handleMessage(data) {
   const topic = data._topic || '';
 
-  if (topic === 'jarvis/stt/text') {
+  if (topic === 'jarvis/stt/text' || topic === 'jarvis/text/input') {
     const text = data.text || '';
     if (text) {
       document.getElementById('userText').textContent = `"${text}"`;
@@ -513,11 +513,7 @@ function sendMessage() {
   const input = document.getElementById('textInput');
   const text = input.value.trim();
   if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify({ topic: 'jarvis/stt/text', payload: { text } }));
-  document.getElementById('userText').textContent = `"${text}"`;
-  addActivity('user', text);
-  utteranceCount++;
-  document.getElementById('metricUtterances').textContent = utteranceCount;
+  ws.send(JSON.stringify({ topic: 'jarvis/text/input', payload: { text } }));
   input.value = '';
 }
 

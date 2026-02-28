@@ -36,7 +36,9 @@ _mqtt_client: mqtt.Client | None = None
 MQTT_SUBSCRIBE_TOPICS = [
     ("jarvis/tts/text", 0),
     ("jarvis/stt/text", 0),
+    ("jarvis/text/input", 0),
     ("jarvis/ui/state", 0),
+    ("jarvis/ui/notification", 0),
     ("jarvis/status/#", 0),
 ]
 

@@ -27,6 +27,14 @@ import jarvis_core.persona as persona
 
 LOG = logging.getLogger(__name__)
 
+_memory = None
+try:
+    from services.memory.main import get_memory_store
+    _memory = get_memory_store()
+    LOG.info("Memory store connected (session=%s)", _memory.session_id)
+except Exception as e:
+    LOG.debug("Memory store unavailable: %s", e)
+
 _skill_registry = {}
 try:
     from skills import load_skills
@@ -131,11 +139,15 @@ def dispatch_and_respond(
         return persona.weather_response(info.get("location", location), summary, user)
 
     if intent == "light_control":
+        room = entities.get("room")
+        if room and room.lower().strip() in ("the", "a", "my", ""):
+            room = None
+        if not room:
+            return f"Which room, {user.preferred_address}?"
         rate_limit_sec = getattr(config.safety, "dangerous_actions_rate_limit_seconds", 30)
         if time.time() - _last_dangerous_action_time < rate_limit_sec:
             return persona.rate_limited_response(user)
         from services.integrations.home_assistant import set_light_state
-        room = entities.get("room") or "default"
         on_off = "on" in (entities.get("on_off") or entities.get("action") or text or "").lower()
         if "off" in (entities.get("on_off") or entities.get("action") or "").lower():
             on_off = False
@@ -302,6 +314,9 @@ def _handle_input(client: mqtt.Client, userdata, msg) -> None:
             _publish_state(client, "idle")
             return
         LOG.info("Input received: %s", text[:80], extra={"correlation_id": correlation_id})
+        if _memory:
+            _memory.add_turn("user", text)
+
         parsed = parse_nlu(text, config)
         intent = parsed.get("intent") or "general"
         with _metrics_lock:
@@ -313,6 +328,9 @@ def _handle_input(client: mqtt.Client, userdata, msg) -> None:
             _publish_state(client, "speaking")
             client.publish(TOPIC_TTS_TEXT, json.dumps({"text": response}), qos=1)
             LOG.info("TTS published: %s", response[:80], extra={"correlation_id": correlation_id})
+            if _memory:
+                latency = time.time() - start
+                _memory.add_turn("assistant", response, intent=intent, latency_sec=latency)
         _last_latency_sec = time.time() - start
     except Exception as e:
         with _metrics_lock:
@@ -378,16 +396,16 @@ def main() -> None:
     configure_logging(config.log_level, "orchestrator")
     t = threading.Thread(target=_metrics_handler, daemon=True)
     t.start()
-    client = mqtt.Client(client_id=f"{config.mqtt.client_id_prefix}-orchestrator")
-    if config.mqtt.username:
-        client.username_pw_set(config.mqtt.username, config.mqtt.password)
+
+    from jarvis_core.mqtt_helpers import create_client
+    client = create_client(
+        config,
+        "orchestrator",
+        subscriptions=[(TOPIC_STT_TEXT, 1), (TOPIC_TEXT_INPUT, 1)],
+    )
     client.user_data_set({"config": config})
-    client.connect(config.mqtt.host, config.mqtt.port, 60)
-    client.subscribe(TOPIC_STT_TEXT, qos=1)
-    client.subscribe(TOPIC_TEXT_INPUT, qos=1)
     client.message_callback_add(TOPIC_STT_TEXT, on_stt)
     client.message_callback_add(TOPIC_TEXT_INPUT, on_text_input)
-    client.publish(TOPIC_STATUS, json.dumps({"status": "ready"}), qos=0)
     user = _get_user(config)
     LOG.info(
         "J.A.R.V.I.S. orchestrator online. Addressing user as '%s'. Metrics on :8002",
