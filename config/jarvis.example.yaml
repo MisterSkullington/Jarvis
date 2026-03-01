@@ -11,7 +11,7 @@ mqtt:
 llm:
   enabled: true
   base_url: http://localhost:11434
-  model: phi3
+  model: llama3.1:8b
   timeout_seconds: 60
 
 nlu_agent:
@@ -30,11 +30,39 @@ wakeword:
   sensitivity: 0.5
 
 tts:
-  engine: piper
+  engine: xtts
   piper_executable: piper
   piper_model: en_US-libritts-high.onnx
+  xtts_model: tts_models/multilingual/multi-dataset/xtts_v2
+  xtts_speaker_wav: assets/jarvis_voice_reference.wav
+  xtts_language: en
   voice_rate: 180
   voice_volume: 1.0
+
+user:
+  name: Sir
+  preferred_address: sir
+  location: ""
+  timezone: ""
+  interests: []
+
+web_ui:
+  enabled: true
+  host: 0.0.0.0
+  port: 8080
+
+memory:
+  enabled: true
+  db_path: data/memory.db
+  max_history_per_session: 50
+  max_search_results: 10
+
+proactive:
+  enabled: true
+  morning_briefing_hour: 8
+  morning_briefing_minute: 0
+  calendar_alert_minutes_before: 10
+  weather_update_interval_hours: 3
 
 home_assistant:
   base_url: http://homeassistant.local:8123
@@ -45,6 +73,9 @@ safety:
   allowed_system_commands:
     lock_pc: "rundll32.exe user32.dll,LockWorkStation"
   dangerous_actions_rate_limit_seconds: 30
+  require_confirmation:
+    - lock
+    - shutdown
+    - restart
 
 log_level: INFO
-

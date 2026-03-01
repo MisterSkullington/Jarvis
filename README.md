@@ -1,84 +1,140 @@
-# Jarvis – Local-First Voice Assistant
+# J.A.R.V.I.S. – Local-First Voice Assistant
 
-Jarvis is a modular, privacy-first voice assistant designed to run primarily on your Windows PC with optional offloading to a home server. It provides:
+> *Just A Rather Very Intelligent System*
 
-- Local speech-to-text (STT) and text-to-speech (TTS)
-- Intent understanding via a local LLM (Ollama) and rules
-- A central orchestrator that coordinates tools and integrations
-- Smart-home control (Home Assistant / MQTT), web APIs, and calendar support
-- Reminders, timers, and scheduled actions
+A modular, privacy-first voice assistant inspired by the MCU's J.A.R.V.I.S., designed to run on your own hardware. It provides a calm, British-accented AI personality with smart-home control, web search, proactive briefings, and a holographic-style web dashboard.
 
-This repository implements the architecture described in the **Local-First Jarvis Architecture Plan**.
+## Features
+
+- **JARVIS Personality** — Witty, formal, addresses you as "sir" (configurable). Full system prompt and persona for LLM interactions.
+- **Voice** — Coqui XTTS v2 (neural voice cloning), Piper (fast offline), or pyttsx3 (fallback). British accent via voice reference audio.
+- **Web HUD** — Blue holographic dashboard with arc reactor animation, real-time transcripts, service status, activity log, and text input.
+- **Smart Home** — Home Assistant integration: lights, climate/thermostat, locks, scenes, and media player.
+- **Web Search** — DuckDuckGo integration for real-time information retrieval.
+- **Proactive Briefings** — Scheduled morning briefings with weather, calendar, and reminders.
+- **Conversation Memory** — Persistent SQLite-backed conversation history across sessions.
+- **Plugin System** — Drop-in skill modules in `skills/` for custom capabilities.
+- **NLU** — Rule-based intent parsing with LLM fallback (Ollama). Supports 15+ intents.
+- **Reminders & Timers** — APScheduler with SQLite persistence.
+- **Calendar** — Local ICS file parsing (Google Calendar OAuth optional).
+- **System Monitoring** — Service health tracking with offline alerts.
+
+## Architecture
+
+```
+User ──▶ Wakeword ──▶ STT ──▶ Orchestrator ──▶ NLU Agent ──▶ Integrations
+                                    │                              │
+                                    ▼                              ▼
+                              TTS ◀── Scheduler          Home Assistant / Web APIs
+                                    │
+                                    ▼
+                              Web HUD (browser)
+```
+
+All services communicate over **MQTT** (Eclipse Mosquitto). The orchestrator is the central brain.
 
 ## Repository Structure
 
-- `infra/` – Docker & infra services (MQTT broker, Ollama, etc.)
-- `jarvis_core/` – Shared configuration and logging utilities
-- `services/` – Individual microservices:
-  - `wakeword/` – Wake-word detection on your PC
-  - `stt/` – Speech-to-text
-  - `tts/` – Text-to-speech
-  - `orchestrator/` – Central brain and routing
-  - `nlu_agent/` – Intent parsing + LLM-backed agent
-  - `scheduler/` – Reminders and scheduled tasks
-  - `integrations/` – Smart home, web APIs, calendar, system control
-- `desktop_client/` – Windows tray / desktop helper client
-- `config/` – Example configuration files and profiles
+- `jarvis_core/` — Shared config, logging, persona, MQTT helpers
+- `services/` — Microservices:
+  - `nlu_agent/` — Intent parsing + LLM agent (FastAPI on :8001)
+  - `orchestrator/` — Central brain, intent dispatch (metrics on :8002)
+  - `tts/` — Text-to-speech (XTTS / Piper / pyttsx3)
+  - `stt/` — Speech-to-text (Vosk)
+  - `wakeword/` — Wake word detection (openwakeword)
+  - `scheduler/` — Reminders and timers (APScheduler + SQLite)
+  - `web_ui/` — Web HUD dashboard (FastAPI + WebSocket on :8080)
+  - `memory/` — Persistent conversation memory (SQLite)
+  - `proactive/` — Scheduled briefings and calendar alerts
+  - `monitor/` — Service health monitoring
+  - `integrations/` — Home Assistant, weather, news, calendar, web search, system control
+- `skills/` — Plugin skill modules (e.g. `system_info.py`)
+- `desktop_client/` — Windows tray app (PySide6 / pystray)
+- `config/` — YAML configuration profiles
+- `infra/` — Docker Compose (Mosquitto MQTT, optional Ollama LLM)
+- `assets/` — Voice reference audio for XTTS
 
 ## Quickstart
 
 1. **Install Python dependencies**
 
    ```bash
-   pip install -e .
+   pip install -e ".[dev]"
    ```
 
 2. **Copy and edit configuration**
 
    ```bash
-   mkdir -p config
-   copy config\\jarvis.example.yaml config\\dev.yaml
+   cp config/jarvis.example.yaml config/dev.yaml
+   cp .env.example .env
+   # Edit config/dev.yaml and .env with your settings
    ```
 
-   Update `config/dev.yaml` with your MQTT broker address, Home Assistant token, and any API keys.
-
-3. **Start infra (optional but recommended on a home server)**
-
-   From the `infra/` directory:
+3. **Start infrastructure**
 
    ```bash
-   docker compose up -d
+   docker compose -f infra/docker-compose.yml up -d
    ```
 
-4. **Run core services**
-
-   In separate terminals:
+4. **Start all services**
 
    ```bash
-   python -m services.wakeword.main
-   python -m services.stt.main
-   python -m services.tts.main
+   python jarvis_launcher.py          # core services (NLU, orchestrator, scheduler, web UI)
+   python jarvis_launcher.py --all    # all services including TTS, STT, proactive, monitor
+   ```
+
+   Or start individually:
+   ```bash
    python -m services.nlu_agent.main
    python -m services.orchestrator.main
    python -m services.scheduler.main
+   python -m services.web_ui.main
    ```
 
-5. **Test the flow**
+5. **Open the HUD**
 
-   - Say the wake word (e.g. “Jarvis”) near your microphone.
-   - Speak a command such as “Turn on the living room lights” or “Remind me to stand up in 10 minutes”.
-   - Jarvis should transcribe, route the intent, call integrations, and reply via TTS.
+   Navigate to `http://localhost:8080` in your browser.
+
+6. **Test the flow**
+
+   Type a command in the HUD, or publish via MQTT:
+   ```bash
+   mosquitto_pub -t jarvis/stt/text -m '{"text": "hello jarvis"}'
+   ```
 
 ## Configuration
 
-See `config/jarvis.example.yaml` for all supported options. You can maintain multiple profiles such as `dev.yaml` and `prod.yaml` and select them via environment variables.
+See `config/jarvis.example.yaml` for all options. Key sections:
+
+- `user` — Your name, preferred address ("sir", "ma'am", etc.), location
+- `llm` — Ollama model and endpoint
+- `tts` — Engine selection (xtts, piper, pyttsx3) and voice settings
+- `mqtt` — Broker connection
+- `home_assistant` — HA base URL and token
+- `proactive` — Morning briefing schedule, calendar alert timing
+- `memory` — Conversation database path
+- `web_ui` — HUD host and port
+
+Environment variables: see `.env.example` for API keys and overrides.
+
+## Creating Skills
+
+Drop a Python file in `skills/`:
+
+```python
+SKILL_NAME = "my_skill"
+
+def handle_my_intent(text, entities, config, mqtt_client, user):
+    return f"Hello from my skill, {user.preferred_address}."
+
+def register(registry):
+    registry["my_intent"] = handle_my_intent
+```
+
+Add a matching intent pattern in `services/nlu_agent/main.py` RULES list.
 
 ## Security & Privacy
 
-- All core components (STT, TTS, LLM, MQTT, Home Assistant) are intended to run on your own hardware.
-- Secrets (API keys, tokens) should be stored in environment variables or `.env` files that you **do not** commit to source control.
-
-## Status
-
-This is a work-in-progress implementation intended as a strong foundation for a personal Jarvis-style assistant. You can extend or swap any service (e.g., different STT/LLM engines) without changing the overall architecture.
-
+- All components run on your own hardware — no cloud dependencies.
+- Secrets belong in `.env` (gitignored) or environment variables.
+- MQTT broker defaults to `allow_anonymous true`; configure auth for production.

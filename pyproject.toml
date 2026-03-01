@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "jarvis-assistant"
-version = "0.1.0"
-description = "Local-first Jarvis-style voice assistant with modular services for STT, TTS, NLU, orchestration, and smart-home integrations."
+version = "0.2.0"
+description = "J.A.R.V.I.S. — a local-first, privacy-focused voice assistant inspired by the MCU, with modular services for STT, TTS, NLU, orchestration, smart-home, and web integrations."
 authors = [
   { name = "Jarvis User" }
 ]
@@ -25,6 +25,12 @@ dependencies = [
   "pyttsx3>=2.90",
   "dateparser>=1.2.0",
   "sqlalchemy>=2.0.0",
+  "duckduckgo-search>=4.0",
+  "psutil>=5.9.0",
+  "numpy>=1.24.0",
+  "aiofiles>=23.0",
+  "websockets>=12.0",
+  "jinja2>=3.1.0",
 ]
 
 [project.optional-dependencies]
@@ -32,6 +38,12 @@ dev = [
   "black",
   "ruff",
   "mypy",
+  "pytest",
+  "pytest-asyncio",
+  "httpx",
+]
+xtts = [
+  "TTS>=0.22.0",
 ]
 wakeword = [
   "openwakeword",
@@ -43,5 +55,32 @@ desktop = [
 ]
 
 [tool.setuptools]
-packages = ["jarvis_core", "services", "services.integrations", "desktop_client"]
+packages = [
+  "jarvis_core",
+  "services",
+  "services.integrations",
+  "services.nlu_agent",
+  "services.orchestrator",
+  "services.scheduler",
+  "services.stt",
+  "services.tts",
+  "services.wakeword",
+  "services.memory",
+  "services.web_ui",
+  "services.proactive",
+  "services.monitor",
+  "desktop_client",
+  "skills",
+]
 
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.black]
+target-version = ["py310"]
+line-length = 120
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
