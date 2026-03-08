@@ -60,6 +60,12 @@ def _service_defs(profile: str, proactivity: bool, vision: bool) -> List[Dict]:
 
     services = [
         {
+            "name": "mqtt-broker",
+            "cmd": [PYTHON, str(ROOT / "scripts" / "mqtt_broker.py")],
+            "ready_marker": "Broker started on",
+            "startup_wait": 3.5,
+        },
+        {
             "name": "nlu_agent",
             "cmd": [PYTHON, "-m", "services.nlu_agent.main"] + profile_args,
             "ready_marker": "Application startup complete",

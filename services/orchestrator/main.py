@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import httpx
 import paho.mqtt.client as mqtt
+from jarvis_core.mqtt_helpers import make_mqtt_client
 
 from jarvis_core import load_config, configure_logging
 
@@ -238,9 +239,7 @@ def main() -> None:
     configure_logging(config.log_level, "orchestrator")
     t = threading.Thread(target=_metrics_handler, daemon=True)
     t.start()
-    client = mqtt.Client(client_id=f"{config.mqtt.client_id_prefix}-orchestrator")
-    if config.mqtt.username:
-        client.username_pw_set(config.mqtt.username, config.mqtt.password)
+    client = make_mqtt_client(config, "orchestrator")
     client.user_data_set({"config": config})
     client.connect(config.mqtt.host, config.mqtt.port, 60)
     client.subscribe(TOPIC_STT_TEXT, qos=1)

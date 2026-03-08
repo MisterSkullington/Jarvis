@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import dateparser
 import paho.mqtt.client as mqtt
 from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobstore
+from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore as SQLAlchemyJobstore
 
 from jarvis_core import load_config, configure_logging
 

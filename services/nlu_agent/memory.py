@@ -41,14 +41,29 @@ def _file_hash(path: Path) -> str:
 
 
 class _SentenceTransformerEF:
-    """Minimal ChromaDB EmbeddingFunction wrapping sentence-transformers."""
+    """Minimal ChromaDB EmbeddingFunction wrapping sentence-transformers.
+
+    Compatible with ChromaDB >=1.x which calls ef.name() as a method.
+    """
 
     def __init__(self, model_name: str) -> None:
         from sentence_transformers import SentenceTransformer
+        self._model_name = model_name
         self._model = SentenceTransformer(model_name)
 
     def __call__(self, input: List[str]) -> List[List[float]]:  # noqa: A002
         return self._model.encode(input, convert_to_numpy=True).tolist()
+
+    # ChromaDB 1.x calls name() as a callable method
+    def name(self) -> str:  # type: ignore[override]
+        return f"sentence-transformers/{self._model_name}"
+
+    def get_config(self) -> dict:
+        return {"model_name": self._model_name}
+
+    @classmethod
+    def build_from_config(cls, config: dict) -> "_SentenceTransformerEF":
+        return cls(config.get("model_name", "all-MiniLM-L6-v2"))
 
 
 class JarvisMemory:
