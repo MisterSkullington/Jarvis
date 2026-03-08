@@ -1,0 +1,59 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "full-stack",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["scripts/start_all.py", "--profile", "dev", "--no-proactivity", "--no-vision"],
+      "port": 8001
+    },
+    {
+      "name": "nlu-agent",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "services.nlu_agent.main", "--profile", "dev"],
+      "port": 8001
+    },
+    {
+      "name": "vision",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "services.vision.main", "--profile", "dev"],
+      "port": 8003
+    },
+    {
+      "name": "mqtt-broker",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["scripts/mqtt_broker.py"],
+      "port": 1883
+    },
+    {
+      "name": "orchestrator",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "services.orchestrator.main", "--profile", "dev"],
+      "port": 8002
+    },
+    {
+      "name": "tts",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "services.tts.main", "--profile", "dev"],
+      "port": 1883
+    },
+    {
+      "name": "stt",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "services.stt.main", "--profile", "dev"],
+      "port": 1883
+    },
+    {
+      "name": "scheduler",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "services.scheduler.main", "--profile", "dev"],
+      "port": 1883
+    },
+    {
+      "name": "hud",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["desktop_client/tray_app.py"],
+      "port": 1883
+    }
+  ]
+}

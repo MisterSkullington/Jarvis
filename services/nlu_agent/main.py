@@ -7,17 +7,17 @@ from __future__ import annotations
 
 import re
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import httpx
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from jarvis_core import load_config, configure_logging
+from jarvis_core import load_config, configure_logging, get_honorific, get_system_message, ollama_chat
 
 LOG = __import__("logging").getLogger(__name__)
 
@@ -48,9 +48,28 @@ RULES: list[tuple] = [
     (r"\b(stop|cancel|never mind)\b", "cancel", []),
 ]
 
+# Pre-compiled RULES for efficient per-request matching
+_COMPILED_RULES = [
+    (re.compile(r[0], re.IGNORECASE), r[1], r[2], r[3] if len(r) > 3 else {})
+    for r in RULES
+]
+
 # In-memory conversation history fallback when memory is disabled
 CHAT_HISTORY: List[Dict[str, str]] = []
 MAX_HISTORY = 10
+_chat_history_lock = threading.Lock()
+
+# Module-level config cache — loaded once at startup, not per-request
+_config = None
+
+
+def _get_config():
+    """Return the cached JarvisConfig, loading on first call."""
+    global _config
+    if _config is None:
+        _config = load_config()
+    return _config
+
 
 # Optional persistent memory (initialised in startup event)
 _memory: Optional[Any] = None  # JarvisMemory | None
@@ -97,8 +116,9 @@ class IngestResponse(BaseModel):
 
 @app.on_event("startup")
 def _startup() -> None:
-    global _memory
-    config = load_config()
+    global _memory, _config
+    _config = load_config()
+    config = _config
     configure_logging(config.log_level, "nlu_agent")
     if getattr(config, "memory", None) and config.memory.enabled:
         try:
@@ -119,10 +139,8 @@ def rule_based_parse(text: str) -> Optional[tuple[str, Dict[str, Any], float]]:
     text_lower = (text or "").strip().lower()
     if not text_lower:
         return None
-    for rule in RULES:
-        pattern, intent, entity_keys = rule[0], rule[1], rule[2]
-        static_entities: Dict[str, Any] = rule[3] if len(rule) > 3 else {}
-        m = re.search(pattern, text_lower, re.IGNORECASE)
+    for pattern, intent, entity_keys, static_entities in _COMPILED_RULES:
+        m = pattern.search(text_lower)
         if m:
             entities: Dict[str, Any] = dict(static_entities)
             if entity_keys and m.groups():
@@ -131,32 +149,6 @@ def rule_based_parse(text: str) -> Optional[tuple[str, Dict[str, Any], float]]:
                         entities[key] = m.group(i + 1).strip()
             return (intent, entities, 0.9)
     return None
-
-
-def _system_message(config) -> Dict[str, str]:
-    """Return the Jarvis system message dict for Ollama calls."""
-    prompt = getattr(getattr(config, "personality", None), "system_prompt", None) or (
-        "You are Jarvis, a highly intelligent personal assistant. "
-        "Speak with dry British wit, address the user as 'Sir', and be concise."
-    )
-    return {"role": "system", "content": prompt}
-
-
-def ollama_chat(messages: List[Dict[str, str]], config, timeout: int = 60) -> Optional[str]:
-    """Call Ollama /api/chat and return assistant message content."""
-    if not getattr(config, "llm", None) or not getattr(config.llm, "enabled", True):
-        return None
-    url = f"{config.llm.base_url.rstrip('/')}/api/chat"
-    payload = {"model": config.llm.model, "messages": messages, "stream": False}
-    try:
-        with httpx.Client(timeout=timeout) as client:
-            r = client.post(url, json=payload)
-            r.raise_for_status()
-            data = r.json()
-            return (data.get("message") or {}).get("content")
-    except Exception as e:
-        LOG.warning("Ollama chat failed: %s", e)
-        return None
 
 
 def ollama_parse_intent(text: str, config) -> Optional[tuple[str, Dict[str, Any], float]]:
@@ -175,7 +167,7 @@ def ollama_parse_intent(text: str, config) -> Optional[tuple[str, Dict[str, Any]
         "role": "user",
         "content": f"Extract intent and entities from: {text}",
     }
-    content = ollama_chat([system, user], config, timeout=15)
+    content = (ollama_chat([system, user], config, timeout=15) or {}).get("content")
     if not content:
         return None
     intent = "general"
@@ -197,7 +189,7 @@ def ollama_parse_intent(text: str, config) -> Optional[tuple[str, Dict[str, Any]
 
 @app.post("/parse", response_model=ParseResponse)
 def parse(req: ParseRequest) -> ParseResponse:
-    config = load_config()
+    config = _get_config()
     text = (req.text or "").strip()
     if not text:
         return ParseResponse(intent="unknown", entities={}, confidence=0.0, raw_text=text)
@@ -212,18 +204,17 @@ def parse(req: ParseRequest) -> ParseResponse:
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest) -> ChatResponse:
-    config = load_config()
+    config = _get_config()
     text = (req.text or "").strip()
     if not text:
-        honorific = getattr(getattr(config, "personality", None), "honorific", "Sir")
         return ChatResponse(
-            response=f"I didn't quite catch that, {honorific}.",
+            response=f"I didn't quite catch that, {get_honorific(config)}.",
             intent=None,
             tools_used=[],
         )
 
     # Build message list: system prompt → optional RAG context → history → user
-    messages: List[Dict[str, str]] = [_system_message(config)]
+    messages: List[Dict[str, str]] = [get_system_message(config)]
 
     if _memory and req.session_id:
         try:
@@ -235,12 +226,13 @@ def chat(req: ChatRequest) -> ChatResponse:
         except Exception as exc:
             LOG.warning("Memory retrieval failed: %s", exc)
     else:
-        for h in CHAT_HISTORY[-MAX_HISTORY:]:
-            messages.append({"role": h["role"], "content": h["content"]})
+        with _chat_history_lock:
+            for h in CHAT_HISTORY[-MAX_HISTORY:]:
+                messages.append({"role": h["role"], "content": h["content"]})
 
     messages.append({"role": "user", "content": text})
 
-    content = ollama_chat(messages, config)
+    content = (ollama_chat(messages, config) or {}).get("content")
     if content:
         # Persist turns
         if _memory and req.session_id:
@@ -250,14 +242,15 @@ def chat(req: ChatRequest) -> ChatResponse:
             except Exception as exc:
                 LOG.warning("Memory store failed: %s", exc)
         else:
-            CHAT_HISTORY.append({"role": "user", "content": text})
-            CHAT_HISTORY.append({"role": "assistant", "content": content})
-            if len(CHAT_HISTORY) > MAX_HISTORY * 2:
-                CHAT_HISTORY[:] = CHAT_HISTORY[-MAX_HISTORY * 2:]
+            with _chat_history_lock:
+                CHAT_HISTORY.append({"role": "user", "content": text})
+                CHAT_HISTORY.append({"role": "assistant", "content": content})
+                if len(CHAT_HISTORY) > MAX_HISTORY * 2:
+                    CHAT_HISTORY[:] = CHAT_HISTORY[-MAX_HISTORY * 2:]
         return ChatResponse(response=content.strip(), intent=None, tools_used=[])
 
     # LLM unavailable — personality-infused rule-based fallback
-    honorific = getattr(getattr(config, "personality", None), "honorific", "Sir")
+    honorific = get_honorific(config)
     parsed = rule_based_parse(text)
     intent = parsed[0] if parsed else "general"
     fallbacks = {
@@ -284,9 +277,9 @@ def chat(req: ChatRequest) -> ChatResponse:
 @app.post("/agent", response_model=ChatResponse)
 def agent(req: ChatRequest) -> ChatResponse:
     """Tool-calling agent endpoint. Requires agent.enabled: true in config."""
-    config = load_config()
+    config = _get_config()
     text = (req.text or "").strip()
-    honorific = getattr(getattr(config, "personality", None), "honorific", "Sir")
+    honorific = get_honorific(config)
     if not text:
         return ChatResponse(response=f"I didn't quite catch that, {honorific}.", tools_used=[])
 

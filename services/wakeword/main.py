@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import paho.mqtt.client as mqtt
 
-from jarvis_core import load_config, configure_logging
+from jarvis_core import load_config, configure_logging, make_mqtt_client
 
 LOG = logging.getLogger(__name__)
 
@@ -70,9 +70,7 @@ def main() -> None:
     config = load_config()
     configure_logging(config.log_level, "wakeword")
 
-    client = mqtt.Client(client_id=f"{config.mqtt.client_id_prefix}-wakeword")
-    if config.mqtt.username:
-        client.username_pw_set(config.mqtt.username, config.mqtt.password)
+    client = make_mqtt_client(config, "wakeword")
     client.connect(config.mqtt.host, config.mqtt.port, 60)
     client.subscribe(TOPIC_TRIGGER, qos=1)
     client.message_callback_add(TOPIC_TRIGGER, on_trigger)

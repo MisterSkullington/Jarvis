@@ -16,48 +16,18 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import httpx
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from jarvis_core import get_honorific, get_system_message, ollama_chat
 
 LOG = logging.getLogger(__name__)
 
-
-def _system_msg(config) -> Dict[str, str]:
-    prompt = getattr(getattr(config, "personality", None), "system_prompt", None) or (
-        "You are Jarvis, an intelligent personal assistant. Be concise and helpful."
-    )
-    return {"role": "system", "content": prompt}
-
-
-def _call_ollama(
-    messages: List[Dict[str, Any]],
-    tools: List[Dict[str, Any]],
-    config,
-) -> Optional[Dict[str, Any]]:
-    """
-    POST to Ollama /api/chat with optional tool definitions.
-    Returns the raw message dict from the response, or None on failure.
-    """
-    if not getattr(config, "llm", None) or not getattr(config.llm, "enabled", True):
-        return None
-    url = f"{config.llm.base_url.rstrip('/')}/api/chat"
-    payload: Dict[str, Any] = {
-        "model": config.llm.model,
-        "messages": messages,
-        "stream": False,
-    }
-    if tools:
-        payload["tools"] = tools
-    try:
-        with httpx.Client(timeout=config.llm.timeout_seconds) as client:
-            r = client.post(url, json=payload)
-            r.raise_for_status()
-            data = r.json()
-            return data.get("message") or {}
-    except Exception as exc:
-        LOG.warning("Ollama agent call failed: %s", exc)
-        return None
+# Guard: load_plugins() is called once per process, not on every agent invocation
+_plugins_loaded = False
 
 
 def run_agent(
@@ -78,18 +48,21 @@ def run_agent(
     Returns:
         (response_text, tools_used_list)
     """
+    global _plugins_loaded
     from services.nlu_agent.tools import get_ollama_tools, execute, load_plugins
 
-    # Load any plugin tools (idempotent)
-    load_plugins(config)
+    # Load plugin tools once per process lifetime
+    if not _plugins_loaded:
+        load_plugins(config)
+        _plugins_loaded = True
 
-    honorific = getattr(getattr(config, "personality", None), "honorific", "Sir")
+    honorific = get_honorific(config)
     enabled_tools: List[str] = getattr(getattr(config, "agent", None), "tools", [])
     max_iter: int = getattr(getattr(config, "agent", None), "max_iterations", 5)
     ollama_tools = get_ollama_tools(enabled_tools)
 
     # Build initial message list
-    messages: List[Dict[str, Any]] = [_system_msg(config)]
+    messages: List[Dict[str, Any]] = [get_system_message(config)]
 
     if memory and session_id:
         try:
@@ -107,7 +80,7 @@ def run_agent(
 
     for iteration in range(max_iter):
         LOG.debug("Agent iteration %d/%d", iteration + 1, max_iter)
-        msg = _call_ollama(messages, ollama_tools, config)
+        msg = ollama_chat(messages, config, tools=ollama_tools)
 
         if msg is None:
             # Ollama unavailable — return personality fallback
@@ -157,7 +130,7 @@ def run_agent(
         "role": "user",
         "content": "Please provide a final answer based on the tool results above.",
     })
-    final = _call_ollama(messages, [], config)
+    final = ollama_chat(messages, config)
     if final and final.get("content"):
         return (final["content"].strip(), tools_used)
 

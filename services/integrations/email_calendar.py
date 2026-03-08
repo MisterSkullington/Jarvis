@@ -136,7 +136,8 @@ def _send_microsoft(to: str, subject: str, body: str, config) -> Dict[str, Any]:
         token_cache_file = "data/ms_token_cache.bin"
         cache = msal.SerializableTokenCache()
         if os.path.exists(token_cache_file):
-            cache.deserialize(open(token_cache_file).read())
+            with open(token_cache_file) as _fh:
+                cache.deserialize(_fh.read())
 
         app = msal.PublicClientApplication(client_id, authority=f"https://login.microsoftonline.com/{tenant_id}", token_cache=cache)
         accounts = app.get_accounts()

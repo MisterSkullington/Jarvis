@@ -234,7 +234,8 @@ class JarvisMemory:
         try:
             existing_meta = self._know.get(include=["metadatas"]).get("metadatas") or []
             known_hashes = {m.get("file_hash") for m in existing_meta if m.get("file_hash")}
-        except Exception:
+        except Exception as exc:
+            LOG.debug("Could not fetch ingested file hashes, will re-check all files: %s", exc)
             known_hashes = set()
 
         total_chunks = 0

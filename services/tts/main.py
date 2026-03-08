@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import paho.mqtt.client as mqtt
 
-from jarvis_core import load_config, configure_logging
+from jarvis_core import load_config, configure_logging, make_mqtt_client
 
 LOG = logging.getLogger(__name__)
 
@@ -94,9 +94,7 @@ def on_tts_message(client: mqtt.Client, userdata, msg) -> None:
 def main() -> None:
     config = load_config()
     configure_logging(config.log_level, "tts")
-    client = mqtt.Client(client_id=f"{config.mqtt.client_id_prefix}-tts")
-    if config.mqtt.username:
-        client.username_pw_set(config.mqtt.username, config.mqtt.password)
+    client = make_mqtt_client(config, "tts")
     client.user_data_set({"config": config})
     client.connect(config.mqtt.host, config.mqtt.port, 60)
     client.subscribe(TOPIC_TTS_INPUT, qos=1)

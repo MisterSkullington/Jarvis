@@ -17,7 +17,7 @@ import paho.mqtt.client as mqtt
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore as SQLAlchemyJobstore
 
-from jarvis_core import load_config, configure_logging
+from jarvis_core import load_config, configure_logging, make_mqtt_client
 
 LOG = logging.getLogger(__name__)
 
@@ -95,9 +95,7 @@ def main() -> None:
     jobstore = SQLAlchemyJobstore(url=f"sqlite:///{JOBSTORE_PATH}")
     _scheduler = BackgroundScheduler(jobstores={"default": jobstore})
     _scheduler.start()
-    client = mqtt.Client(client_id=f"{config.mqtt.client_id_prefix}-scheduler")
-    if config.mqtt.username:
-        client.username_pw_set(config.mqtt.username, config.mqtt.password)
+    client = make_mqtt_client(config, "scheduler")
     client.connect(config.mqtt.host, config.mqtt.port, 60)
     client.subscribe(TOPIC_SCHEDULER_ADD, qos=1)
     client.message_callback_add(TOPIC_SCHEDULER_ADD, on_scheduler_add)

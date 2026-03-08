@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
+import threading
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -35,6 +36,7 @@ TOPIC_STATUS = "jarvis/status/proactivity"
 
 # Track which events have already been announced to avoid repeat notifications
 _announced: Set[str] = set()
+_announced_lock = threading.Lock()
 _mqtt_client: mqtt.Client | None = None
 
 
@@ -79,21 +81,24 @@ def _check_calendar_reminders(config) -> None:
         delta = dt - now
         # Announce if the event starts within the window and hasn't been announced yet
         event_key = f"{ev.get('summary','')}_{start_raw}"
-        if timedelta(0) <= delta <= window and event_key not in _announced:
-            summary = ev.get("summary", "an event")
-            mins_away = max(1, int(delta.total_seconds() / 60))
-            _say(f"Sir, your upcoming event '{summary}' starts in {mins_away} minute{'s' if mins_away != 1 else ''}.")
-            _announced.add(event_key)
+        if timedelta(0) <= delta <= window:
+            with _announced_lock:
+                if event_key not in _announced:
+                    summary = ev.get("summary", "an event")
+                    mins_away = max(1, int(delta.total_seconds() / 60))
+                    _say(f"Sir, your upcoming event '{summary}' starts in {mins_away} minute{'s' if mins_away != 1 else ''}.")
+                    _announced.add(event_key)
 
     # Expire old announced keys (events more than 1 hour past)
-    for key in list(_announced):
-        try:
-            ts = key.rsplit("_", 1)[-1]
-            dt = _parse_event_dt(ts)
-            if dt and datetime.now() - dt > timedelta(hours=1):
-                _announced.discard(key)
-        except Exception:
-            pass
+    with _announced_lock:
+        for key in list(_announced):
+            try:
+                ts = key.rsplit("_", 1)[-1]
+                dt = _parse_event_dt(ts)
+                if dt and datetime.now() - dt > timedelta(hours=1):
+                    _announced.discard(key)
+            except Exception:
+                pass
 
 
 def _morning_brief(config) -> None:

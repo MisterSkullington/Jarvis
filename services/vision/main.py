@@ -37,6 +37,24 @@ from jarvis_core import load_config, configure_logging
 LOG = logging.getLogger(__name__)
 app = FastAPI(title="Jarvis Vision Service", version="0.1.0")
 
+# Module-level config cache — loaded once at startup, not per-request
+_config = None
+
+
+def _get_config():
+    """Return the cached JarvisConfig, loading on first call."""
+    global _config
+    if _config is None:
+        _config = load_config()
+    return _config
+
+
+@app.on_event("startup")
+def _startup() -> None:
+    global _config
+    _config = load_config()
+    configure_logging(_config.log_level, "vision")
+
 
 # ---------------------------------------------------------------------------
 # Pydantic models
@@ -129,7 +147,7 @@ def _process_image(image_bytes: bytes, config) -> VisionResponse:
 @app.post("/describe", response_model=VisionResponse)
 async def describe(file: UploadFile = File(...)) -> VisionResponse:
     """Accept an image upload and return description + OCR text."""
-    config = load_config()
+    config = _get_config()
     image_bytes = await file.read()
     return _process_image(image_bytes, config)
 
@@ -137,7 +155,7 @@ async def describe(file: UploadFile = File(...)) -> VisionResponse:
 @app.post("/describe_path", response_model=VisionResponse)
 def describe_path(req: DescribeFileRequest) -> VisionResponse:
     """Describe an image from a local file path."""
-    config = load_config()
+    config = _get_config()
     path = Path(req.file_path)
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"File not found: {req.file_path}")
@@ -147,7 +165,7 @@ def describe_path(req: DescribeFileRequest) -> VisionResponse:
 @app.post("/capture_describe", response_model=VisionResponse)
 def capture_describe() -> VisionResponse:
     """Capture the screen and describe it."""
-    config = load_config()
+    config = _get_config()
     image_bytes = _capture_screen(config)
     return _process_image(image_bytes, config)
 
