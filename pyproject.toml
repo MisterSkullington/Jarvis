@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "jarvis-assistant"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local-first Jarvis-style voice assistant with modular services for STT, TTS, NLU, orchestration, and smart-home integrations."
 authors = [
   { name = "Jarvis User" }
@@ -25,6 +25,8 @@ dependencies = [
   "pyttsx3>=2.90",
   "dateparser>=1.2.0",
   "sqlalchemy>=2.0.0",
+  "chromadb>=0.5.0",
+  "sentence-transformers>=3.0.0",
 ]
 
 [project.optional-dependencies]
@@ -32,16 +34,49 @@ dev = [
   "black",
   "ruff",
   "mypy",
+  "pytest>=8.0.0",
+  "pytest-asyncio>=0.23.0",
 ]
 wakeword = [
   "openwakeword",
 ]
+rag = [
+  "langchain-core>=0.3.0",
+  "langchain-community>=0.3.0",
+  "langchain-chroma>=0.2.0",
+]
+stt-fast = [
+  "faster-whisper>=1.0.0",
+]
+vision = [
+  "opencv-python>=4.9.0",
+  "mss>=9.0.0",
+  "Pillow>=10.0.0",
+  "pytesseract>=0.3.10",
+]
 desktop = [
+  "pyautogui>=0.9.54",
+  "mss>=9.0.0",
+]
+desktop-ui = [
   "PySide6>=6.6.0",
   "pystray>=0.19.0",
   "Pillow>=10.0.0",
 ]
 
 [tool.setuptools]
-packages = ["jarvis_core", "services", "services.integrations", "desktop_client"]
+packages = [
+  "jarvis_core",
+  "services",
+  "services.integrations",
+  "services.nlu_agent",
+  "services.proactivity",
+  "services.vision",
+  "desktop_client",
+  "plugins",
+]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]

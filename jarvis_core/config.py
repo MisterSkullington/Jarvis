@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import yaml
 from dotenv import load_dotenv
@@ -21,6 +21,9 @@ class MqttConfig:
     password: Optional[str] = None
     client_id_prefix: str = "jarvis"
     tls: bool = False
+    ca_certs: Optional[str] = None    # path to CA certificate for TLS
+    certfile: Optional[str] = None    # path to client certificate
+    keyfile: Optional[str] = None     # path to client private key
 
 
 @dataclass
@@ -41,8 +44,9 @@ class NluAgentConfig:
 class AudioConfig:
     sample_rate: int = 16000
     channels: int = 1
+    engine: str = "vosk"              # vosk | faster_whisper
     vosk_model_path: str = "models/vosk-model-small-en-us-0.15"
-    whisper_model: str = "base"
+    whisper_model: str = "base"       # for faster_whisper: tiny/base/small/medium/large
 
 
 @dataclass
@@ -54,7 +58,7 @@ class WakewordConfig:
 
 @dataclass
 class TtsConfig:
-    engine: str = "piper"  # or "pyttsx3"
+    engine: str = "piper"             # piper | pyttsx3
     piper_executable: str = "piper"
     piper_model: str = "en_US-libritts-high.onnx"
     voice_rate: int = 180
@@ -79,6 +83,82 @@ class SafetyConfig:
 
 
 @dataclass
+class MemoryConfig:
+    enabled: bool = True
+    chroma_path: str = "data/chroma"
+    conversation_collection: str = "conversations"
+    knowledge_collection: str = "knowledge"
+    documents_path: str = "data/documents"
+    embedding_model: str = "all-MiniLM-L6-v2"
+    top_k: int = 5
+    max_conversation_turns: int = 50
+
+
+@dataclass
+class PersonalityConfig:
+    system_prompt: str = (
+        "You are Jarvis, a highly intelligent personal assistant inspired by the "
+        "iconic AI from Iron Man. You speak with dry British wit, address the user "
+        "as 'Sir', and keep responses concise and direct. You may be subtly sarcastic "
+        "when appropriate, but always prioritize being genuinely useful. You have access "
+        "to calendar, weather, smart home controls, and general knowledge. Never break character."
+    )
+    honorific: str = "Sir"
+
+
+@dataclass
+class AgentConfig:
+    enabled: bool = False             # set true to route general queries through tool-calling agent
+    tools: List[str] = field(default_factory=lambda: [
+        "calendar", "weather", "news", "light_control", "system_command",
+    ])
+    max_iterations: int = 5           # max tool-call rounds before forcing final answer
+
+
+@dataclass
+class ProactivityConfig:
+    enabled: bool = False
+    reminder_minutes: int = 10        # remind this many minutes before calendar events
+    morning_brief_enabled: bool = False
+    morning_brief_time: str = "07:30" # HH:MM local time
+    timezone: str = "UTC"
+
+
+@dataclass
+class VisionConfig:
+    enabled: bool = False
+    base_url: str = "http://localhost:8003"   # vision microservice
+    ollama_vision_model: str = "llava"        # Ollama multimodal model for description
+    screen_capture_region: Optional[Dict[str, int]] = None  # {top,left,width,height} or null
+
+
+@dataclass
+class DesktopConfig:
+    enabled: bool = False
+    allowed_apps: List[str] = field(default_factory=lambda: [
+        "notepad", "calculator", "chrome", "firefox", "explorer",
+    ])
+    rate_limit_seconds: int = 5
+
+
+@dataclass
+class EmailConfig:
+    enabled: bool = False
+    provider: str = "smtp"            # smtp | google | microsoft
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    token_env_var: str = "EMAIL_PASSWORD"
+    from_address: str = ""
+
+
+@dataclass
+class PluginConfig:
+    enabled: bool = False
+    plugins_path: str = "plugins"     # directory containing plugin modules
+
+
+@dataclass
 class JarvisConfig:
     profile: str = "dev"
     mqtt: MqttConfig = field(default_factory=MqttConfig)
@@ -89,6 +169,14 @@ class JarvisConfig:
     tts: TtsConfig = field(default_factory=TtsConfig)
     home_assistant: HomeAssistantConfig = field(default_factory=HomeAssistantConfig)
     safety: SafetyConfig = field(default_factory=SafetyConfig)
+    memory: MemoryConfig = field(default_factory=MemoryConfig)
+    personality: PersonalityConfig = field(default_factory=PersonalityConfig)
+    agent: AgentConfig = field(default_factory=AgentConfig)
+    proactivity: ProactivityConfig = field(default_factory=ProactivityConfig)
+    vision: VisionConfig = field(default_factory=VisionConfig)
+    desktop: DesktopConfig = field(default_factory=DesktopConfig)
+    email: EmailConfig = field(default_factory=EmailConfig)
+    plugins: PluginConfig = field(default_factory=PluginConfig)
     log_level: str = "INFO"
 
 
@@ -112,7 +200,7 @@ def load_config(profile: Optional[str] = None) -> JarvisConfig:
     """
     Load configuration from:
     - config/jarvis.example.yaml (base defaults)
-    - config/{profile}.yaml (overrides, default \"dev\")
+    - config/{profile}.yaml (overrides, default "dev")
     - Environment variables (minor overrides)
     """
     load_dotenv()
@@ -127,7 +215,7 @@ def load_config(profile: Optional[str] = None) -> JarvisConfig:
     _deep_update_dict(merged, base_cfg)
     _deep_update_dict(merged, profile_cfg)
 
-    # Environment-level overrides for quick tweaks
+    # Environment-level overrides
     mqtt_host = os.getenv("JARVIS_MQTT_HOST")
     if mqtt_host:
         merged.setdefault("mqtt", {})
@@ -142,12 +230,14 @@ def load_config(profile: Optional[str] = None) -> JarvisConfig:
     if log_level:
         merged["log_level"] = log_level
 
-    # Convert dict into dataclasses
     def build(section_cls, key: str):
         section_dict = merged.get(key, {}) or {}
-        return section_cls(**section_dict)
+        # Drop unknown keys so dataclasses don't blow up on future YAML additions
+        valid = {f.name for f in section_cls.__dataclass_fields__.values()}
+        filtered = {k: v for k, v in section_dict.items() if k in valid}
+        return section_cls(**filtered)
 
-    cfg = JarvisConfig(
+    return JarvisConfig(
         profile=profile,
         mqtt=build(MqttConfig, "mqtt"),
         llm=build(LlmConfig, "llm"),
@@ -157,8 +247,13 @@ def load_config(profile: Optional[str] = None) -> JarvisConfig:
         tts=build(TtsConfig, "tts"),
         home_assistant=build(HomeAssistantConfig, "home_assistant"),
         safety=build(SafetyConfig, "safety"),
+        memory=build(MemoryConfig, "memory"),
+        personality=build(PersonalityConfig, "personality"),
+        agent=build(AgentConfig, "agent"),
+        proactivity=build(ProactivityConfig, "proactivity"),
+        vision=build(VisionConfig, "vision"),
+        desktop=build(DesktopConfig, "desktop"),
+        email=build(EmailConfig, "email"),
+        plugins=build(PluginConfig, "plugins"),
         log_level=merged.get("log_level", "INFO"),
     )
-
-    return cfg
-

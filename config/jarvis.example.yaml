@@ -7,6 +7,10 @@ mqtt:
   password: null
   client_id_prefix: jarvis
   tls: false
+  # TLS cert paths (uncomment and set for encrypted MQTT):
+  # ca_certs: certs/ca.crt
+  # certfile: certs/client.crt
+  # keyfile: certs/client.key
 
 llm:
   enabled: true
@@ -21,8 +25,9 @@ nlu_agent:
 audio:
   sample_rate: 16000
   channels: 1
+  engine: vosk                          # vosk | faster_whisper
   vosk_model_path: models/vosk-model-small-en-us-0.15
-  whisper_model: base
+  whisper_model: base                   # faster_whisper: tiny/base/small/medium/large
 
 wakeword:
   wake_word: jarvis
@@ -46,5 +51,69 @@ safety:
     lock_pc: "rundll32.exe user32.dll,LockWorkStation"
   dangerous_actions_rate_limit_seconds: 30
 
-log_level: INFO
+memory:
+  enabled: true
+  chroma_path: data/chroma
+  conversation_collection: conversations
+  knowledge_collection: knowledge
+  documents_path: data/documents
+  embedding_model: all-MiniLM-L6-v2
+  top_k: 5
+  max_conversation_turns: 50
 
+personality:
+  system_prompt: >-
+    You are Jarvis, a highly intelligent personal assistant inspired by the
+    iconic AI from Iron Man. You speak with dry British wit, address the user
+    as 'Sir', and keep responses concise and direct. You may be subtly sarcastic
+    when appropriate, but always prioritize being genuinely useful. You have access
+    to calendar, weather, smart home controls, and general knowledge. Never break character.
+  honorific: Sir
+
+agent:
+  enabled: false                        # set true to enable LLM tool-calling for general queries
+  tools:
+    - calendar
+    - weather
+    - news
+    - light_control
+    - system_command
+  max_iterations: 5
+
+proactivity:
+  enabled: false
+  reminder_minutes: 10                  # notify this many minutes before calendar events
+  morning_brief_enabled: false
+  morning_brief_time: "07:30"           # HH:MM local time
+  timezone: UTC
+
+vision:
+  enabled: false
+  base_url: http://localhost:8003
+  ollama_vision_model: llava            # Ollama multimodal model (must be pulled first)
+  # screen_capture_region:              # optional: {top: 0, left: 0, width: 1920, height: 1080}
+
+desktop:
+  enabled: false
+  allowed_apps:
+    - notepad
+    - calculator
+    - chrome
+    - firefox
+    - explorer
+  rate_limit_seconds: 5
+
+email:
+  enabled: false
+  provider: smtp                        # smtp | google | microsoft
+  smtp_host: ""
+  smtp_port: 587
+  smtp_username: ""
+  token_env_var: EMAIL_PASSWORD
+  from_address: ""
+
+plugins:
+  enabled: false
+  plugins_path: plugins                 # directory scanned for plugin modules on startup
+
+log_level: INFO

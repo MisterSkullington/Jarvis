@@ -1,6 +1,8 @@
 """
-STT service: subscribes to jarvis/audio/start (or runs in continuous mode), records audio
-with silence detection, transcribes with Vosk, and publishes JSON to jarvis/stt/text.
+STT service: subscribes to jarvis/audio/start, records audio with silence detection,
+transcribes with Vosk (default) or faster-whisper, publishes JSON to jarvis/stt/text.
+
+Config: audio.engine = "vosk" | "faster_whisper"
 """
 from __future__ import annotations
 
@@ -17,6 +19,7 @@ import paho.mqtt.client as mqtt
 import sounddevice as sd
 
 from jarvis_core import load_config, configure_logging
+from jarvis_core.mqtt_helpers import make_mqtt_client
 
 LOG = logging.getLogger(__name__)
 
@@ -24,7 +27,6 @@ TOPIC_AUDIO_START = "jarvis/audio/start"
 TOPIC_STT_TEXT = "jarvis/stt/text"
 TOPIC_STATUS = "jarvis/status/stt"
 
-# Defaults if not in config
 SILENCE_THRESHOLD = 500
 SILENCE_DURATION_SEC = 1.5
 MAX_RECORD_SEC = 15
@@ -82,8 +84,12 @@ def record_until_silence(
     return audio_int16.tobytes()
 
 
-def run_stt_loop(config, mqtt_client: mqtt.Client) -> None:
-    """Load Vosk model and process audio when jarvis/audio/start is received."""
+# ---------------------------------------------------------------------------
+# Vosk engine
+# ---------------------------------------------------------------------------
+
+def run_vosk_loop(config, mqtt_client: mqtt.Client) -> None:
+    """Load Vosk model and process audio on jarvis/audio/start."""
     try:
         import vosk
     except ImportError:
@@ -93,12 +99,13 @@ def run_stt_loop(config, mqtt_client: mqtt.Client) -> None:
     model_path = config.audio.vosk_model_path
     if not Path(model_path).exists():
         LOG.warning("Vosk model not found at %s; download from https://alphacephei.com/vosk/models", model_path)
-        # Publish a placeholder so orchestrator can still run (e.g. text input)
-        def on_start(client, userdata, msg):
+
+        def on_start_stub(client, userdata, msg):
             payload = {"text": "", "error": "vosk_model_not_found", "timestamp": time.time()}
             client.publish(TOPIC_STT_TEXT, json.dumps(payload), qos=1)
+
         mqtt_client.subscribe(TOPIC_AUDIO_START, qos=1)
-        mqtt_client.message_callback_add(TOPIC_AUDIO_START, on_start)
+        mqtt_client.message_callback_add(TOPIC_AUDIO_START, on_start_stub)
         while True:
             time.sleep(60)
         return
@@ -108,7 +115,7 @@ def run_stt_loop(config, mqtt_client: mqtt.Client) -> None:
     rec = vosk.KaldiRecognizer(model, sample_rate)
 
     def on_audio_start(client: mqtt.Client, userdata, msg) -> None:
-        LOG.info("Audio start received, recording...")
+        LOG.info("Audio start received (vosk), recording...")
         try:
             raw = record_until_silence(sample_rate, config.audio.channels)
             if len(raw) < sample_rate:
@@ -119,25 +126,92 @@ def run_stt_loop(config, mqtt_client: mqtt.Client) -> None:
             text = (result.get("text") or "").strip()
             payload = {"text": text, "timestamp": time.time(), "confidence": 1.0}
             client.publish(TOPIC_STT_TEXT, json.dumps(payload), qos=1)
-            LOG.info("Published STT: %s", text or "(empty)")
+            LOG.info("Published STT (vosk): %s", text or "(empty)")
         except Exception as e:
-            LOG.exception("STT failed: %s", e)
+            LOG.exception("Vosk STT failed: %s", e)
             client.publish(TOPIC_STT_TEXT, json.dumps({"text": "", "error": str(e), "timestamp": time.time()}), qos=1)
 
     mqtt_client.subscribe(TOPIC_AUDIO_START, qos=1)
     mqtt_client.message_callback_add(TOPIC_AUDIO_START, on_audio_start)
-    mqtt_client.publish(TOPIC_STATUS, json.dumps({"status": "ready"}), qos=0)
-    LOG.info("STT service ready; waiting for %s", TOPIC_AUDIO_START)
+    mqtt_client.publish(TOPIC_STATUS, json.dumps({"status": "ready", "engine": "vosk"}), qos=0)
+    LOG.info("STT (vosk) ready; waiting for %s", TOPIC_AUDIO_START)
     while True:
         time.sleep(60)
+
+
+# ---------------------------------------------------------------------------
+# Faster-Whisper engine
+# ---------------------------------------------------------------------------
+
+def run_faster_whisper_loop(config, mqtt_client: mqtt.Client) -> None:
+    """Load faster-whisper model and process audio on jarvis/audio/start."""
+    try:
+        from faster_whisper import WhisperModel
+    except ImportError:
+        LOG.error("faster-whisper not installed; pip install 'jarvis-assistant[stt-fast]'")
+        LOG.info("Falling back to Vosk...")
+        run_vosk_loop(config, mqtt_client)
+        return
+
+    model_size = config.audio.whisper_model  # tiny | base | small | medium | large
+    LOG.info("Loading faster-whisper model: %s ...", model_size)
+    try:
+        import torch
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        compute = "float16" if device == "cuda" else "int8"
+    except ImportError:
+        device, compute = "cpu", "int8"
+
+    model = WhisperModel(model_size, device=device, compute_type=compute)
+    sample_rate = config.audio.sample_rate
+
+    def on_audio_start(client: mqtt.Client, userdata, msg) -> None:
+        LOG.info("Audio start received (faster-whisper), recording...")
+        try:
+            raw = record_until_silence(sample_rate, config.audio.channels)
+            if len(raw) < sample_rate:
+                LOG.info("Recording too short, ignoring")
+                return
+            audio_f32 = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+            segments, info = model.transcribe(audio_f32, beam_size=5, language="en")
+            text = " ".join(seg.text.strip() for seg in segments).strip()
+            confidence = round(getattr(info, "language_probability", 1.0), 3)
+            payload = {"text": text, "timestamp": time.time(), "confidence": confidence}
+            client.publish(TOPIC_STT_TEXT, json.dumps(payload), qos=1)
+            LOG.info("Published STT (faster-whisper): %s", text or "(empty)")
+        except Exception as e:
+            LOG.exception("faster-whisper STT failed: %s", e)
+            client.publish(TOPIC_STT_TEXT, json.dumps({"text": "", "error": str(e), "timestamp": time.time()}), qos=1)
+
+    mqtt_client.subscribe(TOPIC_AUDIO_START, qos=1)
+    mqtt_client.message_callback_add(TOPIC_AUDIO_START, on_audio_start)
+    mqtt_client.publish(
+        TOPIC_STATUS,
+        json.dumps({"status": "ready", "engine": "faster_whisper", "model": model_size}),
+        qos=0,
+    )
+    LOG.info("STT (faster-whisper/%s) ready; waiting for %s", model_size, TOPIC_AUDIO_START)
+    while True:
+        time.sleep(60)
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+def run_stt_loop(config, mqtt_client: mqtt.Client) -> None:
+    """Dispatch to the configured STT engine."""
+    engine = getattr(config.audio, "engine", "vosk").lower()
+    if engine == "faster_whisper":
+        run_faster_whisper_loop(config, mqtt_client)
+    else:
+        run_vosk_loop(config, mqtt_client)
 
 
 def main() -> None:
     config = load_config()
     configure_logging(config.log_level, "stt")
-    client = mqtt.Client(client_id=f"{config.mqtt.client_id_prefix}-stt")
-    if config.mqtt.username:
-        client.username_pw_set(config.mqtt.username, config.mqtt.password)
+    client = make_mqtt_client(config, "stt")
     client.connect(config.mqtt.host, config.mqtt.port, 60)
     client.loop_start()
     try:

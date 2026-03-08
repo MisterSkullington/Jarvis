@@ -48,17 +48,21 @@ def parse_nlu(text: str, config) -> dict:
     return {"intent": "general", "entities": {}, "confidence": 0.0, "raw_text": text}
 
 
-def chat_nlu(text: str, config) -> str:
-    """Call NLU agent /chat for open-ended response."""
+def chat_nlu(text: str, config, session_id: str = "") -> str:
+    """Call NLU agent /agent (when enabled) or /chat for open-ended response."""
     base = config.nlu_agent.base_url.rstrip("/")
+    use_agent = getattr(getattr(config, "agent", None), "enabled", False)
+    endpoint = "agent" if use_agent else "chat"
+    body: dict = {"text": text}
+    if session_id:
+        body["session_id"] = session_id
     try:
         with httpx.Client(timeout=config.nlu_agent.timeout_seconds) as client:
-            r = client.post(f"{base}/chat", json={"text": text})
+            r = client.post(f"{base}/{endpoint}", json=body)
             if r.is_success:
-                data = r.json()
-                return (data.get("response") or "").strip()
+                return (r.json().get("response") or "").strip()
     except Exception as e:
-        LOG.warning("NLU chat failed: %s", e)
+        LOG.warning("NLU %s failed: %s", endpoint, e)
     return "I'm having trouble connecting to the assistant."
 
 
@@ -69,7 +73,7 @@ def dispatch_and_respond(text: str, parsed: dict, config, mqtt_client: mqtt.Clie
     entities = parsed.get("entities") or {}
 
     if intent == "greet":
-        return "Hello. How can I help you today?"
+        return "Good day, Sir. How may I be of assistance?"
 
     if intent == "weather":
         from services.integrations.web_apis import get_weather
@@ -94,6 +98,31 @@ def dispatch_and_respond(text: str, parsed: dict, config, mqtt_client: mqtt.Clie
         if result.get("ok"):
             return f"Turning {'on' if on_off else 'off'} the {room} lights."
         return result.get("error", "Could not control the lights.")
+
+    if intent == "calendar":
+        from services.integrations.calendar import get_next_events
+        events = get_next_events(limit=5)
+        if not events:
+            return "Your calendar appears clear, Sir. No upcoming events found."
+        lines = [f"  {ev.get('summary', 'Untitled')} — {ev.get('start', 'unknown')}" for ev in events]
+        header = f"You have {len(events)} upcoming event{'s' if len(events) != 1 else ''}, Sir:"
+        return header + "\n" + "\n".join(lines)
+
+    if intent == "system_command":
+        rate_limit_sec = getattr(config.safety, "dangerous_actions_rate_limit_seconds", 30)
+        if time.time() - _last_dangerous_action_time < rate_limit_sec:
+            return "One moment, Sir. Please wait before issuing another system command."
+        from services.integrations.system_control import run_system_command
+        command_id = entities.get("command_id", "")
+        if not command_id:
+            return "I'm not sure which system command you'd like, Sir."
+        result = run_system_command(command_id)
+        with _metrics_lock:
+            _last_dangerous_action_time = time.time()
+        if result.get("ok"):
+            labels = {"lock_pc": "Locking your workstation now, Sir."}
+            return labels.get(command_id, f"Done, Sir. Executed {command_id.replace('_', ' ')}.")
+        return f"I'm afraid that failed, Sir: {result.get('error', 'unknown error')}"
 
     if intent == "reminder":
         task = entities.get("task") or "something"

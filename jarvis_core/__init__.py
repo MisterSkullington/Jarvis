@@ -8,6 +8,7 @@ This package currently exposes:
 
 from .config import load_config
 from .logging_config import configure_logging
+from .mqtt_helpers import make_mqtt_client
 
-__all__ = ["load_config", "configure_logging"]
+__all__ = ["load_config", "configure_logging", "make_mqtt_client"]
 
