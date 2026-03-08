@@ -30,7 +30,7 @@ class MqttConfig:
 class LlmConfig:
     enabled: bool = True
     base_url: str = "http://localhost:11434"
-    model: str = "phi3"
+    model: str = "llama3.1:8b"
     timeout_seconds: int = 60
 
 
@@ -61,8 +61,44 @@ class TtsConfig:
     engine: str = "piper"             # piper | pyttsx3
     piper_executable: str = "piper"
     piper_model: str = "en_US-libritts-high.onnx"
+    xtts_model: str = "tts_models/multilingual/multi-dataset/xtts_v2"
+    xtts_speaker_wav: str = "assets/jarvis_voice_reference.wav"
+    xtts_language: str = "en"
     voice_rate: int = 180
     voice_volume: float = 1.0
+
+
+@dataclass
+class UserProfileConfig:
+    name: str = "Sir"
+    preferred_address: str = "sir"
+    location: str = ""
+    timezone: str = ""
+    interests: List[str] = field(default_factory=list)
+
+
+@dataclass
+class WebUiConfig:
+    enabled: bool = True
+    host: str = "0.0.0.0"
+    port: int = 8080
+
+
+@dataclass
+class MemoryConfig:
+    enabled: bool = True
+    db_path: str = "data/memory.db"
+    max_history_per_session: int = 50
+    max_search_results: int = 10
+
+
+@dataclass
+class ProactiveConfig:
+    enabled: bool = True
+    morning_briefing_hour: int = 8
+    morning_briefing_minute: int = 0
+    calendar_alert_minutes_before: int = 10
+    weather_update_interval_hours: int = 3
 
 
 @dataclass
@@ -80,6 +116,9 @@ class SafetyConfig:
         }
     )
     dangerous_actions_rate_limit_seconds: int = 30
+    require_confirmation: List[str] = field(
+        default_factory=lambda: ["lock", "shutdown", "restart"]
+    )
 
 
 @dataclass
@@ -167,6 +206,10 @@ class JarvisConfig:
     audio: AudioConfig = field(default_factory=AudioConfig)
     wakeword: WakewordConfig = field(default_factory=WakewordConfig)
     tts: TtsConfig = field(default_factory=TtsConfig)
+    user: UserProfileConfig = field(default_factory=UserProfileConfig)
+    web_ui: WebUiConfig = field(default_factory=WebUiConfig)
+    memory: MemoryConfig = field(default_factory=MemoryConfig)
+    proactive: ProactiveConfig = field(default_factory=ProactiveConfig)
     home_assistant: HomeAssistantConfig = field(default_factory=HomeAssistantConfig)
     safety: SafetyConfig = field(default_factory=SafetyConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
@@ -245,6 +288,10 @@ def load_config(profile: Optional[str] = None) -> JarvisConfig:
         audio=build(AudioConfig, "audio"),
         wakeword=build(WakewordConfig, "wakeword"),
         tts=build(TtsConfig, "tts"),
+        user=build(UserProfileConfig, "user"),
+        web_ui=build(WebUiConfig, "web_ui"),
+        memory=build(MemoryConfig, "memory"),
+        proactive=build(ProactiveConfig, "proactive"),
         home_assistant=build(HomeAssistantConfig, "home_assistant"),
         safety=build(SafetyConfig, "safety"),
         memory=build(MemoryConfig, "memory"),

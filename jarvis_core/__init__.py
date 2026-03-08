@@ -4,6 +4,7 @@ Shared utilities for the Jarvis assistant.
 This package currently exposes:
 - load_config: load configuration from YAML + environment.
 - configure_logging: set up consistent logging across services.
+- persona: JARVIS personality, system prompt, and response templates.
 """
 
 from .config import load_config

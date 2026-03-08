@@ -7,21 +7,22 @@ from __future__ import annotations
 
 import re
 import sys
-import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from pydantic import BaseModel
 
 from jarvis_core import load_config, configure_logging
+from jarvis_core.persona import UserProfile, build_system_prompt
+import jarvis_core.persona as persona
 
 LOG = __import__("logging").getLogger(__name__)
 
-app = FastAPI(title="Jarvis NLU Agent", version="0.1.0")
+app = FastAPI(title="Jarvis NLU Agent", version="0.2.0")
 
 # ---------------------------------------------------------------------------
 # Rule patterns: (regex, intent, entity_keys, optional_static_entities)
@@ -143,11 +144,14 @@ def _system_message(config) -> Dict[str, str]:
 
 
 def ollama_chat(messages: List[Dict[str, str]], config, timeout: int = 60) -> Optional[str]:
-    """Call Ollama /api/chat and return assistant message content."""
+    """Call Ollama /api/chat with JARVIS persona and return assistant message content."""
     if not getattr(config, "llm", None) or not getattr(config.llm, "enabled", True):
         return None
     url = f"{config.llm.base_url.rstrip('/')}/api/chat"
-    payload = {"model": config.llm.model, "messages": messages, "stream": False}
+    user_profile = _get_user_profile(config)
+    system_prompt = build_system_prompt(user_profile)
+    full_messages = [{"role": "system", "content": system_prompt}] + messages
+    payload = {"model": config.llm.model, "messages": full_messages, "stream": False}
     try:
         with httpx.Client(timeout=timeout) as client:
             r = client.post(url, json=payload)
@@ -213,6 +217,7 @@ def parse(req: ParseRequest) -> ParseResponse:
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest) -> ChatResponse:
     config = load_config()
+    user_profile = _get_user_profile(config)
     text = (req.text or "").strip()
     if not text:
         honorific = getattr(getattr(config, "personality", None), "honorific", "Sir")
@@ -260,6 +265,7 @@ def chat(req: ChatRequest) -> ChatResponse:
     honorific = getattr(getattr(config, "personality", None), "honorific", "Sir")
     parsed = rule_based_parse(text)
     intent = parsed[0] if parsed else "general"
+    addr = user_profile.preferred_address
     fallbacks = {
         "greet": f"Good day, {honorific}. How may I be of assistance?",
         "weather": f"The weather API doesn't appear to be configured, {honorific}. Check your integrations.",
