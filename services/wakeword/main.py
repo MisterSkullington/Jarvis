@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import paho.mqtt.client as mqtt
 
-from jarvis_core import load_config, configure_logging, make_mqtt_client
+from jarvis_core import load_config, configure_logging, make_mqtt_client, subscribe_and_track
 
 LOG = logging.getLogger(__name__)
 
@@ -72,7 +72,7 @@ def main() -> None:
 
     client = make_mqtt_client(config, "wakeword")
     client.connect(config.mqtt.host, config.mqtt.port, 60)
-    client.subscribe(TOPIC_TRIGGER, qos=1)
+    subscribe_and_track(client, TOPIC_TRIGGER, qos=1)
     client.message_callback_add(TOPIC_TRIGGER, on_trigger)
     client.loop_start()
 

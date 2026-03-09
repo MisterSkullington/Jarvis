@@ -5,6 +5,7 @@ LLM fallback for open-ended queries. Personality via system prompt. Optional RAG
 """
 from __future__ import annotations
 
+import asyncio
 import re
 import sys
 import threading
@@ -73,6 +74,14 @@ def _get_config():
 
 # Optional persistent memory (initialised in startup event)
 _memory: Optional[Any] = None  # JarvisMemory | None
+
+# Control-character stripping regex (keeps normal whitespace)
+_CTRL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _sanitize(text: str) -> str:
+    """Strip control characters from user input before passing to LLM."""
+    return _CTRL_CHAR_RE.sub("", text).strip()
 
 
 # ---------------------------------------------------------------------------
@@ -151,7 +160,7 @@ def rule_based_parse(text: str) -> Optional[tuple[str, Dict[str, Any], float]]:
     return None
 
 
-def ollama_parse_intent(text: str, config) -> Optional[tuple[str, Dict[str, Any], float]]:
+def _ollama_parse_intent(text: str, config) -> Optional[tuple[str, Dict[str, Any], float]]:
     """Use LLM to extract intent/entities if rule-based missed."""
     import json
     system = {
@@ -184,44 +193,35 @@ def ollama_parse_intent(text: str, config) -> Optional[tuple[str, Dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
-# Endpoints
+# Endpoints (async — blocking LLM/memory calls run in thread pool)
 # ---------------------------------------------------------------------------
 
 @app.post("/parse", response_model=ParseResponse)
-def parse(req: ParseRequest) -> ParseResponse:
+async def parse(req: ParseRequest) -> ParseResponse:
     config = _get_config()
-    text = (req.text or "").strip()
+    text = _sanitize(req.text or "")
     if not text:
         return ParseResponse(intent="unknown", entities={}, confidence=0.0, raw_text=text)
+
     result = rule_based_parse(text)
     if result is None and getattr(config.llm, "enabled", True):
-        result = ollama_parse_intent(text, config)
+        result = await asyncio.to_thread(_ollama_parse_intent, text, config)
     if result:
         intent, entities, conf = result
         return ParseResponse(intent=intent, entities=entities, confidence=conf, raw_text=text)
     return ParseResponse(intent="general", entities={}, confidence=0.5, raw_text=text)
 
 
-@app.post("/chat", response_model=ChatResponse)
-def chat(req: ChatRequest) -> ChatResponse:
-    config = _get_config()
-    text = (req.text or "").strip()
-    if not text:
-        return ChatResponse(
-            response=f"I didn't quite catch that, {get_honorific(config)}.",
-            intent=None,
-            tools_used=[],
-        )
-
-    # Build message list: system prompt → optional RAG context → history → user
+def _do_chat(text: str, session_id: Optional[str], config) -> ChatResponse:
+    """Synchronous chat logic — run via asyncio.to_thread."""
     messages: List[Dict[str, str]] = [get_system_message(config)]
 
-    if _memory and req.session_id:
+    if _memory and session_id:
         try:
-            context = _memory.build_context(text, req.session_id)
+            context = _memory.build_context(text, session_id)
             if context:
                 messages.append({"role": "system", "content": f"Relevant context:\n{context}"})
-            for turn in _memory.get_recent_turns(req.session_id, limit=MAX_HISTORY):
+            for turn in _memory.get_recent_turns(session_id, limit=MAX_HISTORY):
                 messages.append({"role": turn["role"], "content": turn["content"]})
         except Exception as exc:
             LOG.warning("Memory retrieval failed: %s", exc)
@@ -234,11 +234,10 @@ def chat(req: ChatRequest) -> ChatResponse:
 
     content = (ollama_chat(messages, config) or {}).get("content")
     if content:
-        # Persist turns
-        if _memory and req.session_id:
+        if _memory and session_id:
             try:
-                _memory.add_turn(req.session_id, "user", text)
-                _memory.add_turn(req.session_id, "assistant", content)
+                _memory.add_turn(session_id, "user", text)
+                _memory.add_turn(session_id, "assistant", content)
             except Exception as exc:
                 LOG.warning("Memory store failed: %s", exc)
         else:
@@ -274,49 +273,64 @@ def chat(req: ChatRequest) -> ChatResponse:
     )
 
 
-@app.post("/agent", response_model=ChatResponse)
-def agent(req: ChatRequest) -> ChatResponse:
-    """Tool-calling agent endpoint. Requires agent.enabled: true in config."""
+@app.post("/chat", response_model=ChatResponse)
+async def chat(req: ChatRequest) -> ChatResponse:
     config = _get_config()
-    text = (req.text or "").strip()
-    honorific = get_honorific(config)
+    text = _sanitize(req.text or "")
     if not text:
-        return ChatResponse(response=f"I didn't quite catch that, {honorific}.", tools_used=[])
+        return ChatResponse(
+            response=f"I didn't quite catch that, {get_honorific(config)}.",
+            intent=None,
+            tools_used=[],
+        )
+    return await asyncio.to_thread(_do_chat, text, req.session_id, config)
 
+
+def _do_agent(text: str, session_id: Optional[str], config) -> ChatResponse:
+    """Synchronous agent logic — run via asyncio.to_thread."""
     if not getattr(getattr(config, "agent", None), "enabled", False):
-        # Agent disabled — fall through to regular chat
-        return chat(req)
-
+        return _do_chat(text, session_id, config)
     try:
         from services.nlu_agent.agent import run_agent
-        response, tools_used = run_agent(text, req.session_id, config, _memory)
+        response, tools_used = run_agent(text, session_id, config, _memory)
     except Exception as exc:
         LOG.warning("Agent failed, falling back to chat: %s", exc)
-        return chat(req)
+        return _do_chat(text, session_id, config)
 
-    if _memory and req.session_id:
+    if _memory and session_id:
         try:
-            _memory.add_turn(req.session_id, "user", text)
-            _memory.add_turn(req.session_id, "assistant", response)
+            _memory.add_turn(session_id, "user", text)
+            _memory.add_turn(session_id, "assistant", response)
         except Exception as exc:
             LOG.warning("Memory store (agent) failed: %s", exc)
 
     return ChatResponse(response=response, intent=None, tools_used=tools_used)
 
 
+@app.post("/agent", response_model=ChatResponse)
+async def agent(req: ChatRequest) -> ChatResponse:
+    """Tool-calling agent endpoint. Requires agent.enabled: true in config."""
+    config = _get_config()
+    text = _sanitize(req.text or "")
+    honorific = get_honorific(config)
+    if not text:
+        return ChatResponse(response=f"I didn't quite catch that, {honorific}.", tools_used=[])
+    return await asyncio.to_thread(_do_agent, text, req.session_id, config)
+
+
 @app.post("/ingest", response_model=IngestResponse)
-def ingest(req: IngestRequest) -> IngestResponse:
+async def ingest(req: IngestRequest) -> IngestResponse:
     if not _memory:
         raise HTTPException(status_code=503, detail="Memory is not enabled or failed to initialise.")
     try:
-        count = _memory.ingest_documents(req.path)
+        count = await asyncio.to_thread(_memory.ingest_documents, req.path)
         return IngestResponse(chunks_ingested=count, status="ok")
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.get("/health")
-def health() -> Dict[str, str]:
+async def health() -> Dict[str, str]:
     memory_status = "enabled" if _memory else "disabled"
     return {"status": "ok", "service": "nlu_agent", "memory": memory_status}
 
@@ -325,7 +339,7 @@ def main() -> None:
     import uvicorn
     config = load_config()
     configure_logging(config.log_level, "nlu_agent")
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    uvicorn.run(app, host="127.0.0.1", port=8001)
 
 
 if __name__ == "__main__":

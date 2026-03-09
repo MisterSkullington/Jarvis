@@ -36,7 +36,7 @@ class LlmConfig:
 
 @dataclass
 class NluAgentConfig:
-    base_url: str = "http://localhost:8001"
+    base_url: str = "http://127.0.0.1:8001"
     timeout_seconds: int = 30
 
 
@@ -47,6 +47,7 @@ class AudioConfig:
     engine: str = "vosk"              # vosk | faster_whisper
     vosk_model_path: str = "models/vosk-model-small-en-us-0.15"
     whisper_model: str = "base"       # for faster_whisper: tiny/base/small/medium/large
+    silence_threshold: int = 500      # amplitude threshold for VAD silence detection
 
 
 @dataclass

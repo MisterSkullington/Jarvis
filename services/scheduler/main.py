@@ -17,7 +17,7 @@ import paho.mqtt.client as mqtt
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore as SQLAlchemyJobstore
 
-from jarvis_core import load_config, configure_logging, make_mqtt_client
+from jarvis_core import load_config, configure_logging, make_mqtt_client, subscribe_and_track
 
 LOG = logging.getLogger(__name__)
 
@@ -92,17 +92,34 @@ def main() -> None:
     global _scheduler, _mqtt_client
     config = load_config()
     configure_logging(config.log_level, "scheduler")
-    jobstore = SQLAlchemyJobstore(url=f"sqlite:///{JOBSTORE_PATH}")
-    _scheduler = BackgroundScheduler(jobstores={"default": jobstore})
-    _scheduler.start()
+
+    # --- MQTT client FIRST so misfired jobs can publish ----------------
     client = make_mqtt_client(config, "scheduler")
     client.connect(config.mqtt.host, config.mqtt.port, 60)
-    client.subscribe(TOPIC_SCHEDULER_ADD, qos=1)
+    subscribe_and_track(client, TOPIC_SCHEDULER_ADD, qos=1)
     client.message_callback_add(TOPIC_SCHEDULER_ADD, on_scheduler_add)
     _mqtt_client = client
+
+    # --- APScheduler with durable job store ----------------------------
+    jobstore = SQLAlchemyJobstore(url=f"sqlite:///{JOBSTORE_PATH}")
+    _scheduler = BackgroundScheduler(
+        jobstores={"default": jobstore},
+        job_defaults={"misfire_grace_time": 300, "coalesce": True},
+    )
+    _scheduler.start()
+
     client.publish(TOPIC_STATUS, json.dumps({"status": "ready"}), qos=0)
     LOG.info("Scheduler ready; subscribed to %s", TOPIC_SCHEDULER_ADD)
-    client.loop_forever()
+
+    try:
+        client.loop_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        LOG.info("Scheduler shutting down...")
+        if _scheduler:
+            _scheduler.shutdown(wait=False)
+        client.disconnect()
 
 
 if __name__ == "__main__":

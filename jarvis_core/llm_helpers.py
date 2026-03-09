@@ -3,6 +3,7 @@ Shared LLM / Ollama helpers used across NLU, agent, and orchestrator services.
 """
 from __future__ import annotations
 
+import atexit
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -14,6 +15,26 @@ _DEFAULT_SYSTEM_PROMPT = (
     "You are Jarvis, a highly intelligent personal assistant. "
     "Speak with dry British wit, address the user as 'Sir', and be concise."
 )
+
+# Module-level persistent HTTP client (connection-pooled).
+# Created lazily on first use, closed at interpreter shutdown.
+_http_client: Optional[httpx.Client] = None
+
+
+def _get_http_client(timeout: float = 60) -> httpx.Client:
+    """Return (or create) the module-level persistent httpx.Client."""
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.Client(timeout=timeout)
+        atexit.register(_close_http_client)
+    return _http_client
+
+
+def _close_http_client() -> None:
+    global _http_client
+    if _http_client is not None and not _http_client.is_closed:
+        _http_client.close()
+    _http_client = None
 
 
 def get_honorific(config, default: str = "Sir") -> str:
@@ -47,6 +68,8 @@ def ollama_chat(
     Returns the full message dict so callers can inspect both ``content`` and
     ``tool_calls``.  For backwards-compat, callers that only want the text
     content should do ``(result or {}).get("content")``.
+
+    Uses a module-level persistent httpx.Client for connection pooling.
     """
     if not getattr(config, "llm", None) or not getattr(config.llm, "enabled", True):
         return None
@@ -63,10 +86,10 @@ def ollama_chat(
         payload["tools"] = tools
 
     try:
-        with httpx.Client(timeout=t) as client:
-            r = client.post(url, json=payload)
-            r.raise_for_status()
-            return r.json().get("message") or {}
+        client = _get_http_client(timeout=t)
+        r = client.post(url, json=payload, timeout=t)
+        r.raise_for_status()
+        return r.json().get("message") or {}
     except Exception as exc:
         LOG.warning("Ollama chat failed: %s", exc)
         return None

@@ -31,6 +31,7 @@ Signals
 """
 from __future__ import annotations
 
+import json
 import math
 import random
 import sys
@@ -39,7 +40,7 @@ from typing import Dict, List, Optional
 
 from PySide6.QtCore import (
     Property, QEasingCurve, QPointF, QPropertyAnimation,
-    QRectF, Qt, QTimer, Signal, Slot,
+    QRectF, QSettings, Qt, QTimer, Signal, Slot,
 )
 from PySide6.QtGui import (
     QBrush, QColor, QFont, QFontMetrics, QPainter, QPainterPath,
@@ -117,6 +118,8 @@ class JarvisHUD(QWidget):
 
     # ── Init ──────────────────────────────────────────────────────────────
 
+    _SETTINGS_KEY = "JarvisHUD"
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowFlags(
@@ -126,7 +129,7 @@ class JarvisHUD(QWidget):
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_NoSystemBackground)
-        self.setMinimumSize(520, 680)
+        self.setMinimumSize(400, 520)
         self.resize(520, 680)
 
         # ── State ─────────────────────────────────────────────────────────
@@ -142,6 +145,9 @@ class JarvisHUD(QWidget):
         }
         self._waveform: List[float] = [0.0] * 26
         self._drag_origin: Optional[QPointF] = None
+
+        # Restore window position/size
+        self._restore_geometry()
 
         # ── Fonts ─────────────────────────────────────────────────────────
         self._f_title = QFont("Courier New", 11, QFont.Bold)
@@ -242,7 +248,29 @@ class JarvisHUD(QWidget):
             self.move((ev.globalPosition() - self._drag_origin).toPoint())
 
     def mouseReleaseEvent(self, ev):
-        self._drag_origin = None
+        if self._drag_origin is not None:
+            self._drag_origin = None
+            self._save_geometry()
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        self._save_geometry()
+
+    def closeEvent(self, ev):
+        self._save_geometry()
+        super().closeEvent(ev)
+
+    # ── Geometry persistence ──────────────────────────────────────────────
+
+    def _save_geometry(self) -> None:
+        s = QSettings("Jarvis", self._SETTINGS_KEY)
+        s.setValue("geometry", self.saveGeometry())
+
+    def _restore_geometry(self) -> None:
+        s = QSettings("Jarvis", self._SETTINGS_KEY)
+        geo = s.value("geometry")
+        if geo is not None:
+            self.restoreGeometry(geo)
 
     # ── Paint ─────────────────────────────────────────────────────────────
 
@@ -493,42 +521,69 @@ class JarvisHUD(QWidget):
     def _draw_transcript(self, p: QPainter, w: float, h: float) -> None:
         x0, x1 = 26.0, w - 26.0
         y0 = h * 0.612
+        avail_w = int(x1 - x0)
 
         p.save()
         # Top rule
         p.setPen(QPen(_RULE, 1))
         p.drawLine(QPointF(x0, y0 - 5), QPointF(x1, y0 - 5))
 
-        def _row(label: str, text: str, y: float, lc: QColor, tc: QColor) -> None:
+        fm_lbl = QFontMetrics(self._f_label)
+        fm_mono = QFontMetrics(self._f_mono)
+        line_h = fm_mono.height() + 2
+
+        def _draw_block(label: str, text: str, y: float, lc: QColor, tc: QColor, max_lines: int = 3) -> float:
+            """Draw label + word-wrapped text. Returns y after the block."""
             p.setFont(self._f_label)
             p.setPen(QPen(lc))
             p.drawText(int(x0), int(y), label)
-            fm_l = QFontMetrics(self._f_label)
-            lw = fm_l.horizontalAdvance(label) + 5
+            lw = fm_lbl.horizontalAdvance(label) + 5
             p.setFont(self._f_mono)
-            fm_m = QFontMetrics(self._f_mono)
-            display = fm_m.elidedText(text, Qt.ElideRight, int(x1 - x0 - lw))
             p.setPen(QPen(tc))
-            p.drawText(int(x0 + lw), int(y), display)
+            # Word-wrap text into lines
+            words = text.split()
+            lines: List[str] = []
+            cur = ""
+            text_w = int(avail_w - lw)
+            for word in words:
+                test = f"{cur} {word}".strip()
+                if fm_mono.horizontalAdvance(test) > text_w and cur:
+                    lines.append(cur)
+                    cur = word
+                else:
+                    cur = test
+            if cur:
+                lines.append(cur)
+            if not lines:
+                lines = [text]
+            # Limit lines and add ellipsis
+            if len(lines) > max_lines:
+                lines = lines[:max_lines]
+                lines[-1] = fm_mono.elidedText(lines[-1] + "…", Qt.ElideRight, text_w)
+            # Draw first line beside label, subsequent lines indented
+            for i, line in enumerate(lines):
+                p.drawText(int(x0 + lw), int(y + i * line_h), line)
+            return y + len(lines) * line_h
 
-        _row(
+        y_after = _draw_block(
             "YOU:    ",
             self._transcript_you or "(awaiting input…)",
             y0 + 15,
             _LABEL,
             _WHITE if self._transcript_you else _WHITE_80,
         )
-        _row(
+        _draw_block(
             "JARVIS: ",
             self._transcript_jarvis or "(no response yet)",
-            y0 + 36,
+            y_after + 6,
             _CYAN,
             _CYAN if self._transcript_jarvis else _CYAN_120,
+            max_lines=4,
         )
 
         # Bottom rule
         p.setPen(QPen(_RULE, 1))
-        p.drawLine(QPointF(x0, y0 + 50), QPointF(x1, y0 + 50))
+        p.drawLine(QPointF(x0, y0 + 80), QPointF(x1, y0 + 80))
         p.restore()
 
     def _draw_services(self, p: QPainter, w: float, h: float) -> None:

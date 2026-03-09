@@ -12,13 +12,14 @@ This package currently exposes:
 
 from .config import load_config
 from .logging_config import configure_logging
-from .mqtt_helpers import make_mqtt_client
+from .mqtt_helpers import make_mqtt_client, subscribe_and_track
 from .llm_helpers import get_honorific, get_system_message, ollama_chat
 
 __all__ = [
     "load_config",
     "configure_logging",
     "make_mqtt_client",
+    "subscribe_and_track",
     "get_honorific",
     "get_system_message",
     "ollama_chat",

@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import paho.mqtt.client as mqtt
 
-from jarvis_core import load_config, configure_logging, make_mqtt_client
+from jarvis_core import load_config, configure_logging, make_mqtt_client, subscribe_and_track
 
 LOG = logging.getLogger(__name__)
 
@@ -95,13 +95,20 @@ def main() -> None:
     config = load_config()
     configure_logging(config.log_level, "tts")
     client = make_mqtt_client(config, "tts")
-    client.user_data_set({"config": config})
+    # Merge our config into the userdata created by make_mqtt_client
+    client._userdata["config"] = config  # noqa: SLF001
     client.connect(config.mqtt.host, config.mqtt.port, 60)
-    client.subscribe(TOPIC_TTS_INPUT, qos=1)
+    subscribe_and_track(client, TOPIC_TTS_INPUT, qos=1)
     client.message_callback_add(TOPIC_TTS_INPUT, on_tts_message)
     client.publish(TOPIC_STATUS, json.dumps({"status": "ready"}), qos=0)
     LOG.info("TTS service ready; subscribed to %s (engine=%s)", TOPIC_TTS_INPUT, config.tts.engine)
-    client.loop_forever()
+    try:
+        client.loop_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        LOG.info("TTS shutting down...")
+        client.disconnect()
 
 
 if __name__ == "__main__":

@@ -126,19 +126,29 @@ def _service_defs(profile: str, proactivity: bool, vision: bool) -> List[Dict]:
 # Process management
 # ---------------------------------------------------------------------------
 
-class ManagedProcess:
-    """A subprocess with a log-tailing thread and a coloured prefix."""
+MAX_RESTARTS = 3          # per service — after this many rapid crashes, give up
+RESTART_WINDOW_SEC = 60   # crashes within this window count toward MAX_RESTARTS
 
-    def __init__(self, name: str, cmd: List[str], colour: str, ready_marker: str):
+
+class ManagedProcess:
+    """A subprocess with a log-tailing thread, coloured prefix, and auto-restart."""
+
+    def __init__(self, name: str, cmd: List[str], colour: str, ready_marker: str,
+                 startup_wait: float = 2.0):
         self.name = name
         self.cmd = cmd
         self.colour = colour
         self.ready_marker = ready_marker
+        self.startup_wait = startup_wait
         self.proc: Optional[subprocess.Popen] = None
         self._ready = threading.Event()
         self._log_thread: Optional[threading.Thread] = None
+        self._crash_times: List[float] = []
+        self._stopped = False          # True when intentionally stopped
 
     def start(self) -> None:
+        self._stopped = False
+        self._ready.clear()
         self.proc = subprocess.Popen(
             self.cmd,
             cwd=str(ROOT),
@@ -168,6 +178,7 @@ class ManagedProcess:
         return self._ready.wait(timeout=timeout)
 
     def stop(self) -> None:
+        self._stopped = True
         if self.proc and self.proc.poll() is None:
             self.proc.terminate()
             try:
@@ -178,6 +189,37 @@ class ManagedProcess:
     @property
     def alive(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
+
+    def maybe_restart(self) -> bool:
+        """
+        Attempt to restart if this process crashed.
+        Returns True if restarted, False if restart limit exceeded.
+        """
+        if self._stopped or self.alive:
+            return True
+
+        now = time.time()
+        self._crash_times = [t for t in self._crash_times if now - t < RESTART_WINDOW_SEC]
+        self._crash_times.append(now)
+
+        if len(self._crash_times) > MAX_RESTARTS:
+            return False
+
+        rc = self.proc.returncode if self.proc else "?"
+        attempt = len(self._crash_times)
+        print(
+            f"\n{self.colour}[{self.name}]{_RESET} "
+            f"Crashed (rc={rc}). Restarting ({attempt}/{MAX_RESTARTS})...\n",
+            file=sys.stderr,
+        )
+
+        try:
+            self.start()
+            self.wait_ready(self.startup_wait)
+        except FileNotFoundError as exc:
+            print(f"  ERROR restarting {self.name}: {exc}", file=sys.stderr)
+            return False
+        return True
 
 
 # ---------------------------------------------------------------------------
@@ -206,11 +248,13 @@ def main() -> None:
 
     for sdef in service_defs:
         colour = next(colour_iter, "")
+        wait = sdef.get("startup_wait", 2.0)
         mp = ManagedProcess(
             name=sdef["name"],
             cmd=sdef["cmd"],
             colour=colour,
             ready_marker=sdef.get("ready_marker", ""),
+            startup_wait=wait,
         )
         print(f"{colour}[{sdef['name']}]{_RESET} Starting…")
         try:
@@ -221,7 +265,6 @@ def main() -> None:
 
         processes.append(mp)
 
-        wait = sdef.get("startup_wait", 2.0)
         ready = mp.wait_ready(timeout=wait)
         if not ready:
             # Not necessarily bad — ready_marker may not be emitted yet
@@ -232,7 +275,7 @@ def main() -> None:
     print()
 
     # -----------------------------------------------------------------------
-    # Watch for any crashed processes and report; shutdown on Ctrl+C
+    # Watchdog: auto-restart crashed services (up to MAX_RESTARTS per window)
     # -----------------------------------------------------------------------
 
     shutdown_event = threading.Event()
@@ -246,13 +289,17 @@ def main() -> None:
     try:
         while not shutdown_event.is_set():
             for mp in processes:
-                if not mp.alive:
-                    rc = mp.proc.returncode
-                    print(f"\n{mp.colour}[{mp.name}]{_RESET} Process exited unexpectedly (rc={rc}). "
-                          "Shutting down all services.\n", file=sys.stderr)
-                    shutdown_event.set()
-                    break
-            shutdown_event.wait(timeout=1.0)
+                if not mp.alive and not mp._stopped:
+                    if not mp.maybe_restart():
+                        print(
+                            f"\n{mp.colour}[{mp.name}]{_RESET} "
+                            f"Exceeded {MAX_RESTARTS} restarts in {RESTART_WINDOW_SEC}s. "
+                            "Shutting down all services.\n",
+                            file=sys.stderr,
+                        )
+                        shutdown_event.set()
+                        break
+            shutdown_event.wait(timeout=2.0)
     finally:
         print("\nShutting down…")
         for mp in reversed(processes):

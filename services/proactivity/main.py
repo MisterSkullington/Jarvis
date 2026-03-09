@@ -26,8 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import paho.mqtt.client as mqtt
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from jarvis_core import load_config, configure_logging
-from jarvis_core.mqtt_helpers import make_mqtt_client
+from jarvis_core import load_config, configure_logging, make_mqtt_client, get_honorific
 
 LOG = logging.getLogger(__name__)
 
@@ -106,7 +105,7 @@ def _morning_brief(config) -> None:
     from services.integrations.calendar import get_next_events
     from services.integrations.web_apis import get_weather
 
-    honorific = getattr(getattr(config, "personality", None), "honorific", "Sir")
+    honorific = get_honorific(config)
     now = datetime.now()
     greeting = f"Good morning, {honorific}. It is {now.strftime('%A, %B %d')} and the time is {now.strftime('%H:%M')}."
     _say(greeting)

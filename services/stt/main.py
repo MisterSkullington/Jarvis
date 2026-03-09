@@ -3,12 +3,14 @@ STT service: subscribes to jarvis/audio/start, records audio with silence detect
 transcribes with Vosk (default) or faster-whisper, publishes JSON to jarvis/stt/text.
 
 Config: audio.engine = "vosk" | "faster_whisper"
+        audio.silence_threshold = 500  (amplitude threshold for VAD)
 """
 from __future__ import annotations
 
 import json
 import logging
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -18,8 +20,7 @@ import numpy as np
 import paho.mqtt.client as mqtt
 import sounddevice as sd
 
-from jarvis_core import load_config, configure_logging
-from jarvis_core.mqtt_helpers import make_mqtt_client
+from jarvis_core import load_config, configure_logging, make_mqtt_client, subscribe_and_track
 
 LOG = logging.getLogger(__name__)
 
@@ -27,15 +28,19 @@ TOPIC_AUDIO_START = "jarvis/audio/start"
 TOPIC_STT_TEXT = "jarvis/stt/text"
 TOPIC_STATUS = "jarvis/status/stt"
 
-SILENCE_THRESHOLD = 500
+# Defaults (overridable via config.audio.silence_threshold)
+_DEFAULT_SILENCE_THRESHOLD = 500
 SILENCE_DURATION_SEC = 1.5
 MAX_RECORD_SEC = 15
+
+# Guard to prevent overlapping recordings
+_recording_lock = threading.Lock()
 
 
 def record_until_silence(
     sample_rate: int,
     channels: int,
-    silence_threshold: int = SILENCE_THRESHOLD,
+    silence_threshold: int = _DEFAULT_SILENCE_THRESHOLD,
     silence_duration_sec: float = SILENCE_DURATION_SEC,
     max_sec: float = MAX_RECORD_SEC,
 ) -> bytes:
@@ -104,7 +109,7 @@ def run_vosk_loop(config, mqtt_client: mqtt.Client) -> None:
             payload = {"text": "", "error": "vosk_model_not_found", "timestamp": time.time()}
             client.publish(TOPIC_STT_TEXT, json.dumps(payload), qos=1)
 
-        mqtt_client.subscribe(TOPIC_AUDIO_START, qos=1)
+        subscribe_and_track(mqtt_client, TOPIC_AUDIO_START, qos=1)
         mqtt_client.message_callback_add(TOPIC_AUDIO_START, on_start_stub)
         while True:
             time.sleep(60)
@@ -112,12 +117,20 @@ def run_vosk_loop(config, mqtt_client: mqtt.Client) -> None:
 
     model = vosk.Model(model_path)
     sample_rate = config.audio.sample_rate
+    silence_threshold = getattr(config.audio, "silence_threshold", _DEFAULT_SILENCE_THRESHOLD)
     rec = vosk.KaldiRecognizer(model, sample_rate)
 
-    def on_audio_start(client: mqtt.Client, userdata, msg) -> None:
-        LOG.info("Audio start received (vosk), recording...")
+    def _do_record_vosk(client: mqtt.Client) -> None:
+        """Run recording + transcription in a worker thread."""
+        if not _recording_lock.acquire(blocking=False):
+            LOG.debug("Already recording, skipping overlapping request")
+            return
         try:
-            raw = record_until_silence(sample_rate, config.audio.channels)
+            LOG.info("Audio start received (vosk), recording...")
+            raw = record_until_silence(
+                sample_rate, config.audio.channels,
+                silence_threshold=silence_threshold,
+            )
             if len(raw) < sample_rate:
                 LOG.info("Recording too short, ignoring")
                 return
@@ -130,8 +143,14 @@ def run_vosk_loop(config, mqtt_client: mqtt.Client) -> None:
         except Exception as e:
             LOG.exception("Vosk STT failed: %s", e)
             client.publish(TOPIC_STT_TEXT, json.dumps({"text": "", "error": str(e), "timestamp": time.time()}), qos=1)
+        finally:
+            _recording_lock.release()
 
-    mqtt_client.subscribe(TOPIC_AUDIO_START, qos=1)
+    def on_audio_start(client: mqtt.Client, userdata, msg) -> None:
+        # Run in separate thread so MQTT callbacks are not blocked
+        threading.Thread(target=_do_record_vosk, args=(client,), daemon=True).start()
+
+    subscribe_and_track(mqtt_client, TOPIC_AUDIO_START, qos=1)
     mqtt_client.message_callback_add(TOPIC_AUDIO_START, on_audio_start)
     mqtt_client.publish(TOPIC_STATUS, json.dumps({"status": "ready", "engine": "vosk"}), qos=0)
     LOG.info("STT (vosk) ready; waiting for %s", TOPIC_AUDIO_START)
@@ -164,11 +183,19 @@ def run_faster_whisper_loop(config, mqtt_client: mqtt.Client) -> None:
 
     model = WhisperModel(model_size, device=device, compute_type=compute)
     sample_rate = config.audio.sample_rate
+    silence_threshold = getattr(config.audio, "silence_threshold", _DEFAULT_SILENCE_THRESHOLD)
 
-    def on_audio_start(client: mqtt.Client, userdata, msg) -> None:
-        LOG.info("Audio start received (faster-whisper), recording...")
+    def _do_record_whisper(client: mqtt.Client) -> None:
+        """Run recording + transcription in a worker thread."""
+        if not _recording_lock.acquire(blocking=False):
+            LOG.debug("Already recording, skipping overlapping request")
+            return
         try:
-            raw = record_until_silence(sample_rate, config.audio.channels)
+            LOG.info("Audio start received (faster-whisper), recording...")
+            raw = record_until_silence(
+                sample_rate, config.audio.channels,
+                silence_threshold=silence_threshold,
+            )
             if len(raw) < sample_rate:
                 LOG.info("Recording too short, ignoring")
                 return
@@ -182,8 +209,14 @@ def run_faster_whisper_loop(config, mqtt_client: mqtt.Client) -> None:
         except Exception as e:
             LOG.exception("faster-whisper STT failed: %s", e)
             client.publish(TOPIC_STT_TEXT, json.dumps({"text": "", "error": str(e), "timestamp": time.time()}), qos=1)
+        finally:
+            _recording_lock.release()
 
-    mqtt_client.subscribe(TOPIC_AUDIO_START, qos=1)
+    def on_audio_start(client: mqtt.Client, userdata, msg) -> None:
+        # Run in separate thread so MQTT callbacks are not blocked
+        threading.Thread(target=_do_record_whisper, args=(client,), daemon=True).start()
+
+    subscribe_and_track(mqtt_client, TOPIC_AUDIO_START, qos=1)
     mqtt_client.message_callback_add(TOPIC_AUDIO_START, on_audio_start)
     mqtt_client.publish(
         TOPIC_STATUS,
@@ -219,6 +252,7 @@ def main() -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        LOG.info("STT shutting down...")
         client.loop_stop()
         client.disconnect()
 

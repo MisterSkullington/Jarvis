@@ -194,7 +194,7 @@ def main() -> None:
     import uvicorn
     config = load_config()
     configure_logging(config.log_level, "vision")
-    uvicorn.run(app, host="0.0.0.0", port=8003)
+    uvicorn.run(app, host="127.0.0.1", port=8003)
 
 
 if __name__ == "__main__":

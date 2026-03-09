@@ -115,7 +115,7 @@ class JarvisMemory:
     # ------------------------------------------------------------------
 
     def add_turn(self, session_id: str, role: str, content: str) -> None:
-        """Store a single conversation turn."""
+        """Store a single conversation turn, pruning excess turns per session."""
         if not content or not content.strip():
             return
         ts = time.time()
@@ -125,11 +125,38 @@ class JarvisMemory:
             documents=[content],
             metadatas=[{"session_id": session_id, "role": role, "timestamp": ts}],
         )
+        self._maybe_prune(session_id)
+
+    def _maybe_prune(self, session_id: str) -> None:
+        """Delete oldest turns if session exceeds max_conversation_turns."""
+        max_turns = getattr(self._cfg, "max_conversation_turns", 50)
+        if max_turns <= 0:
+            return
+        try:
+            results = self._conv.get(
+                where={"session_id": session_id},
+                include=["metadatas"],
+            )
+            ids = results.get("ids") or []
+            metas = results.get("metadatas") or []
+            if len(ids) <= max_turns:
+                return
+            # Sort by timestamp, oldest first
+            pairs = sorted(zip(ids, metas), key=lambda x: x[1].get("timestamp", 0))
+            excess = len(ids) - max_turns
+            to_delete = [p[0] for p in pairs[:excess]]
+            self._conv.delete(ids=to_delete)
+            LOG.debug("Pruned %d old turns for session %s", excess, session_id)
+        except Exception as exc:
+            LOG.warning("Memory pruning failed for session %s: %s", session_id, exc)
 
     def get_recent_turns(self, session_id: str, limit: int = 10) -> List[Dict[str, str]]:
         """
         Return the last *limit* turns for *session_id*, ordered oldest-first.
         Each dict has keys: role, content.
+
+        Because pruning caps the total stored turns at ``max_conversation_turns``,
+        the fetch here is bounded.
         """
         try:
             results = self._conv.get(

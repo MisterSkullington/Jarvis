@@ -17,9 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import httpx
 import paho.mqtt.client as mqtt
-from jarvis_core.mqtt_helpers import make_mqtt_client
-
-from jarvis_core import load_config, configure_logging
+from jarvis_core import load_config, configure_logging, make_mqtt_client, subscribe_and_track
 
 LOG = logging.getLogger(__name__)
 
@@ -240,13 +238,19 @@ def main() -> None:
     t = threading.Thread(target=_metrics_handler, daemon=True)
     t.start()
     client = make_mqtt_client(config, "orchestrator")
-    client.user_data_set({"config": config})
+    client._userdata["config"] = config  # noqa: SLF001
     client.connect(config.mqtt.host, config.mqtt.port, 60)
-    client.subscribe(TOPIC_STT_TEXT, qos=1)
+    subscribe_and_track(client, TOPIC_STT_TEXT, qos=1)
     client.message_callback_add(TOPIC_STT_TEXT, on_stt)
     client.publish(TOPIC_STATUS, json.dumps({"status": "ready"}), qos=0)
     LOG.info("Orchestrator ready; subscribed to %s; metrics on :8002/metrics", TOPIC_STT_TEXT)
-    client.loop_forever()
+    try:
+        client.loop_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        LOG.info("Orchestrator shutting down...")
+        client.disconnect()
 
 
 if __name__ == "__main__":
