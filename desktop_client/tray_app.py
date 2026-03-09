@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import paho.mqtt.client as mqtt
 
 from jarvis_core import load_config, configure_logging
-from jarvis_core.mqtt_helpers import make_mqtt_client
+from jarvis_core.mqtt_helpers import make_mqtt_client, subscribe_and_track
 
 LOG = logging.getLogger(__name__)
 
@@ -174,10 +174,13 @@ def main() -> None:
     userdata: dict = {"last_transcript": "", "last_response": "", "hud": None}
 
     client = make_mqtt_client(config, "tray")
-    client.user_data_set(userdata)
+    # Merge userdata with the reconnect tracking dict set by make_mqtt_client
+    client.user_data_get().update(userdata)
     client.on_message = _on_message
     client.connect(config.mqtt.host, config.mqtt.port, 60)
-    client.subscribe([(TOPIC_STT_TEXT, 0), (TOPIC_TTS_TEXT, 0), (TOPIC_STATUS, 0)])
+    subscribe_and_track(client, TOPIC_STT_TEXT, qos=0)
+    subscribe_and_track(client, TOPIC_TTS_TEXT, qos=0)
+    subscribe_and_track(client, TOPIC_STATUS, qos=0)
     client.loop_start()
 
     try:

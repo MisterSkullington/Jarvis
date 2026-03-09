@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from jarvis_core import load_config, configure_logging, get_honorific, get_system_message, ollama_chat
@@ -23,6 +24,11 @@ from jarvis_core import load_config, configure_logging, get_honorific, get_syste
 LOG = __import__("logging").getLogger(__name__)
 
 app = FastAPI(title="Jarvis NLU Agent", version="0.1.0")
+
+
+@app.get("/", include_in_schema=False)
+def root():
+    return RedirectResponse(url="/docs")
 
 # ---------------------------------------------------------------------------
 # Rule patterns: (regex, intent, entity_keys, optional_static_entities)
