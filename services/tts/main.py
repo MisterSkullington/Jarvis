@@ -7,12 +7,13 @@ import json
 import logging
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+import numpy as np
 import paho.mqtt.client as mqtt
+import sounddevice as sd
 
 from jarvis_core import load_config, configure_logging, make_mqtt_client, subscribe_and_track
 
@@ -22,10 +23,17 @@ TOPIC_TTS_INPUT = "jarvis/tts/text"
 TOPIC_STATUS = "jarvis/status/tts"
 
 
+def _play_raw_audio(raw_pcm: bytes, sample_rate: int = 22050, device: str | None = None) -> None:
+    """Play raw int16 PCM audio via sounddevice (supports device selection)."""
+    audio_f32 = np.frombuffer(raw_pcm, dtype=np.int16).astype(np.float32) / 32768.0
+    sd.play(audio_f32, samplerate=sample_rate, device=device, blocking=True)
+
+
 def speak_piper(text: str, config) -> bool:
     """Use Piper CLI if available. Returns True if successful."""
     exe = getattr(config.tts, "piper_executable", "piper") or "piper"
     model = getattr(config.tts, "piper_model", "en_US-libritts-high") or "en_US-libritts-high"
+    output_device = getattr(config.tts, "output_device", None)
     try:
         proc = subprocess.run(
             [exe, "--model", model, "--output_raw"],
@@ -35,24 +43,8 @@ def speak_piper(text: str, config) -> bool:
         )
         if proc.returncode != 0 or not proc.stdout:
             return False
-        # Play raw 22050 Hz 16-bit mono with system default
-        with tempfile.NamedTemporaryFile(suffix=".raw", delete=False) as f:
-            f.write(proc.stdout)
-            path = f.name
-        try:
-            subprocess.run(
-                ["ffplay", "-nodisp", "-autoexit", "-f", "s16le", "-ar", "22050", "-ac", "1", path],
-                capture_output=True,
-                timeout=60,
-            )
-        except FileNotFoundError:
-            # No ffplay; try aplay on Linux or just skip playback
-            try:
-                subprocess.run(["aplay", "-f", "S16_LE", "-r", "22050", "-c", "1", path], capture_output=True, timeout=60)
-            except FileNotFoundError:
-                LOG.warning("No ffplay/aplay found; Piper audio generated but not played")
-        finally:
-            Path(path).unlink(missing_ok=True)
+        # Play raw 22050 Hz 16-bit mono via sounddevice (supports device selection)
+        _play_raw_audio(proc.stdout, sample_rate=22050, device=output_device)
         return True
     except (subprocess.TimeoutExpired, FileNotFoundError, Exception) as e:
         LOG.debug("Piper TTS failed: %s", e)
@@ -60,7 +52,11 @@ def speak_piper(text: str, config) -> bool:
 
 
 def speak_pyttsx3(text: str, config) -> None:
-    """Use pyttsx3 for offline TTS (works on Windows without extra binaries)."""
+    """Use pyttsx3 for offline TTS (works on Windows without extra binaries).
+
+    Note: pyttsx3 uses the system default output device and does not support
+    device selection natively.
+    """
     import pyttsx3
     engine = pyttsx3.init()
     engine.setProperty("rate", getattr(config.tts, "voice_rate", 180))

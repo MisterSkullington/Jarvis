@@ -43,6 +43,7 @@ def record_until_silence(
     silence_threshold: int = _DEFAULT_SILENCE_THRESHOLD,
     silence_duration_sec: float = SILENCE_DURATION_SEC,
     max_sec: float = MAX_RECORD_SEC,
+    device: str | None = None,
 ) -> bytes:
     """Record raw PCM int16 audio until silence or max length."""
     block = 1024
@@ -74,6 +75,7 @@ def record_until_silence(
         dtype="float32",
         blocksize=block,
         callback=callback,
+        device=device,
     ):
         while True:
             time.sleep(0.1)
@@ -118,6 +120,7 @@ def run_vosk_loop(config, mqtt_client: mqtt.Client) -> None:
     model = vosk.Model(model_path)
     sample_rate = config.audio.sample_rate
     silence_threshold = getattr(config.audio, "silence_threshold", _DEFAULT_SILENCE_THRESHOLD)
+    input_device = getattr(config.audio, "input_device", None)
     rec = vosk.KaldiRecognizer(model, sample_rate)
 
     def _do_record_vosk(client: mqtt.Client) -> None:
@@ -130,6 +133,7 @@ def run_vosk_loop(config, mqtt_client: mqtt.Client) -> None:
             raw = record_until_silence(
                 sample_rate, config.audio.channels,
                 silence_threshold=silence_threshold,
+                device=input_device,
             )
             if len(raw) < sample_rate:
                 LOG.info("Recording too short, ignoring")
@@ -184,6 +188,7 @@ def run_faster_whisper_loop(config, mqtt_client: mqtt.Client) -> None:
     model = WhisperModel(model_size, device=device, compute_type=compute)
     sample_rate = config.audio.sample_rate
     silence_threshold = getattr(config.audio, "silence_threshold", _DEFAULT_SILENCE_THRESHOLD)
+    input_device = getattr(config.audio, "input_device", None)
 
     def _do_record_whisper(client: mqtt.Client) -> None:
         """Run recording + transcription in a worker thread."""
@@ -195,6 +200,7 @@ def run_faster_whisper_loop(config, mqtt_client: mqtt.Client) -> None:
             raw = record_until_silence(
                 sample_rate, config.audio.channels,
                 silence_threshold=silence_threshold,
+                device=input_device,
             )
             if len(raw) < sample_rate:
                 LOG.info("Recording too short, ignoring")

@@ -122,15 +122,21 @@ class JarvisHUD(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowFlags(
-            Qt.FramelessWindowHint
-            | Qt.WindowStaysOnTopHint
-            | Qt.Tool,
-        )
-        self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setAttribute(Qt.WA_NoSystemBackground)
-        self.setMinimumSize(400, 520)
-        self.resize(520, 680)
+        self._embedded = parent is not None
+
+        if not self._embedded:
+            self.setWindowFlags(
+                Qt.FramelessWindowHint
+                | Qt.WindowStaysOnTopHint
+                | Qt.Tool,
+            )
+            self.setAttribute(Qt.WA_TranslucentBackground)
+            self.setAttribute(Qt.WA_NoSystemBackground)
+            self.setMinimumSize(400, 520)
+            self.resize(520, 680)
+        else:
+            self.setFixedWidth(520)
+            self.setMinimumHeight(520)
 
         # ── State ─────────────────────────────────────────────────────────
         self._ring_angle:       float = 0.0
@@ -146,8 +152,9 @@ class JarvisHUD(QWidget):
         self._waveform: List[float] = [0.0] * 26
         self._drag_origin: Optional[QPointF] = None
 
-        # Restore window position/size
-        self._restore_geometry()
+        # Restore window position/size (standalone only)
+        if not self._embedded:
+            self._restore_geometry()
 
         # ── Fonts ─────────────────────────────────────────────────────────
         self._f_title = QFont("Courier New", 11, QFont.Bold)
@@ -221,8 +228,8 @@ class JarvisHUD(QWidget):
         px, py = ev.position().x(), ev.position().y()
         w, h   = self.width(), self.height()
 
-        # Close ×
-        if px > w - 34 and py < 34:
+        # Close × (standalone only)
+        if not self._embedded and px > w - 34 and py < 34:
             self.hide()
             return
 
@@ -240,24 +247,28 @@ class JarvisHUD(QWidget):
             self.update()
             return
 
-        # Drag
-        self._drag_origin = ev.globalPosition() - self.frameGeometry().topLeft()
+        # Drag (standalone only)
+        if not self._embedded:
+            self._drag_origin = ev.globalPosition() - self.frameGeometry().topLeft()
 
     def mouseMoveEvent(self, ev):
-        if self._drag_origin and ev.buttons() & Qt.LeftButton:
+        if not self._embedded and self._drag_origin and ev.buttons() & Qt.LeftButton:
             self.move((ev.globalPosition() - self._drag_origin).toPoint())
 
     def mouseReleaseEvent(self, ev):
         if self._drag_origin is not None:
             self._drag_origin = None
-            self._save_geometry()
+            if not self._embedded:
+                self._save_geometry()
 
     def resizeEvent(self, ev):
         super().resizeEvent(ev)
-        self._save_geometry()
+        if not self._embedded:
+            self._save_geometry()
 
     def closeEvent(self, ev):
-        self._save_geometry()
+        if not self._embedded:
+            self._save_geometry()
         super().closeEvent(ev)
 
     # ── Geometry persistence ──────────────────────────────────────────────
@@ -293,7 +304,8 @@ class JarvisHUD(QWidget):
         self._draw_services(p, w, h)
         self._draw_listen_btn(p, w, h)
         self._draw_dnd(p, w, h)
-        self._draw_close(p, w, h)
+        if not self._embedded:
+            self._draw_close(p, w, h)
 
         p.end()
 

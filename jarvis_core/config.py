@@ -48,6 +48,7 @@ class AudioConfig:
     vosk_model_path: str = "models/vosk-model-small-en-us-0.15"
     whisper_model: str = "base"       # for faster_whisper: tiny/base/small/medium/large
     silence_threshold: int = 500      # amplitude threshold for VAD silence detection
+    input_device: Optional[str] = None  # audio input device name (None = system default)
 
 
 @dataclass
@@ -64,6 +65,7 @@ class TtsConfig:
     piper_model: str = "en_US-libritts-high.onnx"
     voice_rate: int = 180
     voice_volume: float = 1.0
+    output_device: Optional[str] = None  # audio output device name (None = system default)
 
 
 @dataclass

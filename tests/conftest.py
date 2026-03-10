@@ -37,8 +37,20 @@ def mock_config():
     cfg.agent.enabled = False
     cfg.agent.tools = []
     cfg.agent.max_iterations = 3
+    # Audio
+    cfg.audio.engine = "vosk"
+    cfg.audio.silence_threshold = 500
+    cfg.audio.sample_rate = 16000
+    cfg.audio.input_device = None
+    # TTS
+    cfg.tts.engine = "piper"
+    cfg.tts.voice_rate = 175
+    cfg.tts.output_device = None
     # Memory
     cfg.memory.enabled = False
+    cfg.memory.top_k = 5
+    cfg.memory.max_conversation_turns = 20
+    cfg.memory.embedding_model = "all-MiniLM-L6-v2"
     # Vision / desktop
     cfg.vision.enabled = False
     cfg.desktop.enabled = False

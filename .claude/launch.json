@@ -4,7 +4,7 @@
     {
       "name": "full-stack",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["scripts/start_all.py", "--profile", "dev", "--no-proactivity", "--no-vision"],
+      "runtimeArgs": ["C:/Users/jorda/Documents/GitHub/Jarvis/scripts/start_all.py", "--profile", "dev", "--no-proactivity", "--no-vision"],
       "port": 8001
     },
     {
@@ -22,7 +22,7 @@
     {
       "name": "mqtt-broker",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["scripts/mqtt_broker.py"],
+      "runtimeArgs": ["C:/Users/jorda/Documents/GitHub/Jarvis/scripts/mqtt_broker.py"],
       "port": 1883
     },
     {
@@ -52,7 +52,7 @@
     {
       "name": "hud",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["desktop_client/tray_app.py"],
+      "runtimeArgs": ["C:/Users/jorda/Documents/GitHub/Jarvis/desktop_client/tray_app.py"],
       "port": 1883
     }
   ]
